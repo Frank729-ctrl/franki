@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "franki"
+version = "0.2.0"
+description = "AI-powered CLI assistant for coding, pentesting, and SOC work"
+authors = [{name = "Frank Dela Nutsukpuie", email = "frankdela@example.com"}]
+license = {text = "MIT"}
+requires-python = ">=3.11"
+keywords = ["ai", "cli", "pentesting", "ceh", "soc", "coding", "assistant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: Software Development",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "rich>=13.7.0",
+    "prompt-toolkit>=3.0.0",
+    "pyperclip>=1.8.2",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Frank729-ctrl/franki"
+Repository = "https://github.com/Frank729-ctrl/franki"
+
+[project.scripts]
+franki = "franki.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["franki"]

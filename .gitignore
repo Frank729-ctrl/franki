@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+.eggs/
+
+# franki user config — never commit keys
+config.json
+franki_global_update_prompt.md
+FRANKI.md
+franki_logo.svg
