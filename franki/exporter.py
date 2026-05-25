@@ -11,16 +11,14 @@ if TYPE_CHECKING:
     from franki.session import Session
 
 console = Console()
-GOLD    = "#d4a853"
+GOLD     = "#d4a853"
 TEXT_DIM = "#555555"
 
 
 def _resolve_export_dir(cfg: "FrankiConfig") -> Path | None:
     """
-    Return a resolved, existing export directory.
-    If the configured path doesn't exist, ask the user for a custom path and
-    persist it to config.
-    Returns None if the user cancels.
+    Return a writable export directory.
+    Falls back to asking the user if the configured path doesn't exist.
     """
     from franki.config import save_config
 
@@ -28,8 +26,15 @@ def _resolve_export_dir(cfg: "FrankiConfig") -> Path | None:
     if export_dir.exists():
         return export_dir
 
+    # Try to create it
+    try:
+        export_dir.mkdir(parents=True, exist_ok=True)
+        return export_dir
+    except Exception:
+        pass
+
     console.print(Text(f"  export path not found: {export_dir}", style="yellow"))
-    console.print(Text("  enter a custom path (or press Enter to cancel): ", style=TEXT_DIM), end="")
+    console.print(Text("  enter a path (or press Enter to cancel): ", style=TEXT_DIM), end="")
     try:
         custom = input("").strip()
     except (KeyboardInterrupt, EOFError):
@@ -52,10 +57,6 @@ def _resolve_export_dir(cfg: "FrankiConfig") -> Path | None:
 
 
 def export_session(session: "Session", cfg: "FrankiConfig") -> str | None:
-    """
-    Write the session to a timestamped markdown file.
-    Returns the file path on success, None on failure/cancel.
-    """
     export_dir = _resolve_export_dir(cfg)
     if not export_dir:
         return None
@@ -68,7 +69,7 @@ def export_session(session: "Session", cfg: "FrankiConfig") -> str | None:
         f"\n> skill: {session.skill}",
     ]
     if session.scope:
-        lines.append(f"  ·  scope: {session.scope}")
+        lines.append(f"  scope: {session.scope}")
     lines.append("\n\n---\n\n")
 
     for msg in session.history_display():
@@ -82,22 +83,18 @@ def export_session(session: "Session", cfg: "FrankiConfig") -> str | None:
 
 
 def save_note(text: str, cfg: "FrankiConfig") -> str | None:
-    """
-    Append a timestamped note to today's findings file.
-    Returns the file path on success, None on failure/cancel.
-    """
     export_dir = _resolve_export_dir(cfg)
     if not export_dir:
         return None
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today    = datetime.now().strftime("%Y-%m-%d")
     time_str = datetime.now().strftime("%H:%M")
-    filepath = export_dir / f"franki_notes_{today}.md"
+    filepath = export_dir / f"notes_{today}.md"
 
     entry = f"- [{time_str}] {text}\n"
 
     if not filepath.exists():
-        filepath.write_text(f"# Franki Notes — {today}\n\n{entry}", encoding="utf-8")
+        filepath.write_text(f"# Notes — {today}\n\n{entry}", encoding="utf-8")
     else:
         with filepath.open("a", encoding="utf-8") as f:
             f.write(entry)

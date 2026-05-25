@@ -62,21 +62,14 @@ def _tavily_key(cfg: "FrankiConfig") -> str:
     env = os.environ.get("TAVILY_API_KEY", "")
     if env:
         return env
-    prov = cfg.providers.get("tavily", {})
-    if isinstance(prov, dict):
-        return prov.get("api_key", "")
-    return ""
+    return getattr(cfg, "tavily_api_key", "")
 
 
-def _delkaai_enabled(cfg: "FrankiConfig") -> bool:
-    prov = cfg.providers.get("delkaai", {})
-    return isinstance(prov, dict) and prov.get("enabled", False)
+def _delkaai_enabled(_cfg: "FrankiConfig") -> bool:
+    return False
 
 
-def _delkaai_url(cfg: "FrankiConfig") -> str:
-    prov = cfg.providers.get("delkaai", {})
-    if isinstance(prov, dict):
-        return prov.get("url", "https://api.delkaai.com")
+def _delkaai_url(_cfg: "FrankiConfig") -> str:
     return "https://api.delkaai.com"
 
 

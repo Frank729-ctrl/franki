@@ -1,19 +1,22 @@
-import sys
+"""
+Interactive config editor — used by /config inside the REPL and by `franki config` CLI.
+Presents a menu-driven form instead of raw key=value arguments.
+"""
+from __future__ import annotations
+
 from rich.console import Console
+from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
-from rich.rule import Rule
 
-from franki.config import load_config, save_config, FrankiConfig
+from franki.config import FrankiConfig, load_config, save_config
 
 console = Console()
 
-GOLD = "#d4a853"
+GOLD      = "#d4a853"
 TEXT_BODY = "#a8a8a8"
-TEXT_DIM = "#555555"
-BORDER = "#2d2d2d"
-
-_MASKED_KEYS = {"api_key"}
+TEXT_DIM  = "#555555"
+BORDER    = "#2d2d2d"
 
 
 def _mask(value: str) -> str:
@@ -24,125 +27,260 @@ def _mask(value: str) -> str:
     return value[:4] + "****" + value[-4:]
 
 
-def _print_config(cfg: FrankiConfig) -> None:
-    table = Table(show_header=True, box=None, padding=(0, 2))
-    table.add_column("Key", style=GOLD, no_wrap=True)
-    table.add_column("Value", style=TEXT_BODY)
+def _ask(prompt: str, default: str = "") -> str:
+    console.print(Text(f"  {prompt}", style=TEXT_DIM), end="")
+    if default:
+        console.print(Text(f" [{default}]", style=TEXT_DIM), end="")
+    console.print(Text(": ", style=TEXT_DIM), end="")
+    try:
+        val = input("").strip()
+        return val if val else default
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return default
 
-    table.add_row("mode", cfg.mode)
-    table.add_row("active_skill", cfg.active_skill)
-    table.add_row("active_model", cfg.active_model)
-    table.add_row("stream", str(cfg.stream))
-    table.add_row("theme", cfg.theme)
-    table.add_row("export_path", cfg.export_path)
-    table.add_row("", "")
 
-    for pname, pdata in cfg.providers.items():
-        if not isinstance(pdata, dict):
-            continue
-        for k, v in pdata.items():
-            display = _mask(str(v)) if k in _MASKED_KEYS else str(v)
-            table.add_row(f"providers.{pname}.{k}", display)
+def _yn(prompt: str, current: bool) -> bool:
+    hint = "Y/n" if current else "y/N"
+    console.print(Text(f"  {prompt} [{hint}]: ", style=TEXT_DIM), end="")
+    try:
+        val = input("").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return current
+    if not val:
+        return current
+    return val.startswith("y")
 
+
+def _print_summary(cfg: FrankiConfig) -> None:
     console.print()
-    console.print(table)
+    console.print(Text("  Current config", style=f"bold {GOLD}"))
+    console.print(Rule(style=BORDER))
+
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_column(style=TEXT_DIM, no_wrap=True, width=22)
+    t.add_column(style=TEXT_BODY)
+
+    model = cfg.get_active_model()
+    t.add_row("active provider", cfg.active_provider or "(none)")
+    t.add_row("active model",    model or "(none)")
+    t.add_row("active skill",    cfg.active_skill)
+    t.add_row("auto-skill",      "on" if cfg.auto_skill else "off")
+    t.add_row("auto-accept",     "on" if cfg.auto_accept else "off")
+    t.add_row("export path",     cfg.export_path)
+    t.add_row("web search key",  _mask(cfg.tavily_api_key))
+    t.add_row("providers",       ", ".join(cfg.providers.keys()) or "(none)")
+    t.add_row("MCP servers",     ", ".join(cfg.mcp.keys()) or "(none)")
+
+    console.print(t)
     console.print()
 
 
-def _set_value(cfg: FrankiConfig, dotpath: str, value: str) -> bool:
-    """Set a dotted config path, e.g. groq.api_key or active_model."""
-    parts = dotpath.split(".", 1)
+def run_interactive_config(
+    cfg: FrankiConfig,
+    save_cfg_fn=None,
+    redraw_bar_fn=None,
+) -> None:
+    """
+    Full interactive config editor. Accepts a live cfg object so changes
+    take effect immediately inside the REPL.
+    """
+    _save = save_cfg_fn or (lambda c: save_config(c))
+    _redraw = redraw_bar_fn or (lambda: None)
 
-    # Top-level fields
-    top_fields = {"mode", "active_skill", "active_model", "stream", "theme", "export_path"}
-    if parts[0] in top_fields:
-        field = parts[0]
-        if field == "stream":
-            setattr(cfg, field, value.lower() in ("true", "1", "yes"))
+    while True:
+        _print_summary(cfg)
+
+        console.print(Text(
+            "  1  Active provider\n"
+            "  2  Active model\n"
+            "  3  Active skill\n"
+            "  4  Auto-detect skill\n"
+            "  5  Auto-accept shell commands\n"
+            "  6  Export / notes path\n"
+            "  7  Web search key (Tavily)\n"
+            "  8  Edit provider key\n"
+            "  0  Done",
+            style=TEXT_BODY,
+        ))
+        console.print()
+
+        console.print(Text("  choice: ", style=TEXT_DIM), end="")
+        try:
+            choice = input("").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            break
+
+        if choice in ("0", ""):
+            break
+
+        elif choice == "1":
+            names = list(cfg.providers.keys())
+            if not names:
+                console.print(Text("  no providers configured — add one with /providers", style="yellow"))
+                continue
+            for i, n in enumerate(names, 1):
+                marker = ">" if n == cfg.active_provider else " "
+                console.print(Text(f"  {i}. {marker} {n}", style=TEXT_BODY))
+            sel = _ask("Set default provider", cfg.active_provider)
+            if sel.isdigit():
+                idx = int(sel) - 1
+                sel = names[idx] if 0 <= idx < len(names) else sel
+            if sel in cfg.providers:
+                cfg.active_provider = sel
+                _save(cfg)
+                _redraw()
+                console.print(Text(f"  active provider → {sel}", style=GOLD))
+            else:
+                console.print(Text(f"  provider '{sel}' not found", style="red"))
+
+        elif choice == "2":
+            pdata = cfg.providers.get(cfg.active_provider, {})
+            current_model = pdata.get("model", "") if isinstance(pdata, dict) else ""
+            new_model = _ask(
+                f"Model for {cfg.active_provider or 'provider'}",
+                current_model,
+            )
+            if new_model and isinstance(cfg.providers.get(cfg.active_provider), dict):
+                cfg.providers[cfg.active_provider]["model"] = new_model
+                _save(cfg)
+                _redraw()
+                console.print(Text(f"  model → {new_model}", style=GOLD))
+
+        elif choice == "3":
+            from franki.skills import get_all_skill_names
+            skills = get_all_skill_names()
+            for i, s in enumerate(skills, 1):
+                marker = ">" if s == cfg.active_skill else " "
+                console.print(Text(f"  {i}. {marker} {s}", style=TEXT_BODY))
+            sel = _ask("Active skill", cfg.active_skill)
+            if sel.isdigit():
+                idx = int(sel) - 1
+                sel = skills[idx] if 0 <= idx < len(skills) else sel
+            if sel in skills:
+                cfg.active_skill = sel
+                _save(cfg)
+                _redraw()
+                console.print(Text(f"  skill → {sel}", style=GOLD))
+            else:
+                console.print(Text(f"  skill '{sel}' not found", style="red"))
+
+        elif choice == "4":
+            cfg.auto_skill = _yn("Enable auto-skill detection", cfg.auto_skill)
+            _save(cfg)
+            console.print(Text(f"  auto-skill → {'on' if cfg.auto_skill else 'off'}", style=GOLD))
+
+        elif choice == "5":
+            cfg.auto_accept = _yn(
+                "Auto-accept shell commands (no confirmation prompt for !cmd)",
+                cfg.auto_accept,
+            )
+            _save(cfg)
+            console.print(Text(f"  auto-accept → {'on' if cfg.auto_accept else 'off'}", style=GOLD))
+
+        elif choice == "6":
+            new_path = _ask("Export / notes path", cfg.export_path)
+            if new_path:
+                cfg.export_path = new_path
+                _save(cfg)
+                console.print(Text(f"  export path → {new_path}", style=GOLD))
+
+        elif choice == "7":
+            import getpass
+            console.print(Text("  Tavily API key (hidden, Enter to clear): ", style=TEXT_DIM), end="")
+            try:
+                key = getpass.getpass("").strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+                continue
+            cfg.tavily_api_key = key
+            _save(cfg)
+            console.print(Text("  web search key updated.", style=GOLD))
+
+        elif choice == "8":
+            import getpass
+            names = list(cfg.providers.keys())
+            if not names:
+                console.print(Text("  no providers configured.", style="yellow"))
+                continue
+            for i, n in enumerate(names, 1):
+                console.print(Text(f"  {i}. {n}", style=TEXT_BODY))
+            sel = _ask("Provider to update key for", "")
+            if sel.isdigit():
+                idx = int(sel) - 1
+                sel = names[idx] if 0 <= idx < len(names) else sel
+            if sel not in cfg.providers:
+                console.print(Text(f"  provider '{sel}' not found", style="red"))
+                continue
+            console.print(Text(f"  New API key for {sel} (hidden): ", style=TEXT_DIM), end="")
+            try:
+                key = getpass.getpass("").strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+                continue
+            if key and isinstance(cfg.providers[sel], dict):
+                cfg.providers[sel]["api_key"] = key
+                _save(cfg)
+                console.print(Text(f"  key updated for {sel}.", style=GOLD))
         else:
-            setattr(cfg, field, value)
-        return True
-
-    # Provider fields: groq.api_key, gemini.models, etc.
-    if parts[0] == "providers" and len(parts) == 2:
-        sub = parts[1].split(".", 1)
-        if len(sub) == 2:
-            pname, key = sub
-            if pname in cfg.providers and isinstance(cfg.providers[pname], dict):
-                cfg.providers[pname][key] = value
-                return True
-
-    # Shorthand: groq.api_key → providers.groq.api_key
-    provider_names = list(cfg.providers.keys())
-    if parts[0] in provider_names and len(parts) == 2:
-        pname, key = parts[0], parts[1]
-        if isinstance(cfg.providers[pname], dict):
-            cfg.providers[pname][key] = value
-            return True
-
-    return False
+            console.print(Text("  enter a number from the list above", style=TEXT_DIM))
 
 
-def run_config(args: list[str]) -> None:
+def run_config_cli(args: list[str]) -> None:
+    """Fallback for `franki config` from the command line (non-REPL)."""
     cfg = load_config()
 
-    if not args or args[0] == "list":
-        _print_config(cfg)
+    if not args:
+        run_interactive_config(cfg)
         return
 
-    if args[0] == "get":
-        if len(args) < 2:
-            console.print(Text("  usage: franki config get <key>", style="red"))
-            return
-        dotpath = args[1]
-        parts = dotpath.split(".", 1)
-        pnames = list(cfg.providers.keys())
+    # Legacy positional commands for scripting / CI
+    if args[0] == "list":
+        _print_summary(cfg)
+        return
 
-        if parts[0] in {"mode", "active_skill", "active_model", "stream", "theme", "export_path"}:
-            val = str(getattr(cfg, parts[0]))
-            console.print(Text(f"  {dotpath} = {val}", style=GOLD))
-        elif (parts[0] in pnames or (parts[0] == "providers" and len(parts) == 2)):
-            if parts[0] == "providers":
-                sub = parts[1].split(".", 1)
-                pname, key = sub[0], sub[1] if len(sub) > 1 else ""
+    if args[0] == "set" and len(args) >= 3:
+        key, value = args[1], args[2]
+        if key == "active_provider":
+            cfg.active_provider = value
+        elif key == "active_skill":
+            cfg.active_skill = value
+        elif key == "export_path":
+            cfg.export_path = value
+        elif key == "auto_skill":
+            cfg.auto_skill = value.lower() in ("true", "1", "yes")
+        elif key == "auto_accept":
+            cfg.auto_accept = value.lower() in ("true", "1", "yes")
+        elif "." in key:
+            # e.g. groq.api_key  or  groq.model
+            parts = key.split(".", 1)
+            provider_name, field = parts
+            if provider_name in cfg.providers and isinstance(cfg.providers[provider_name], dict):
+                cfg.providers[provider_name][field] = value
             else:
-                pname = parts[0]
-                key = parts[1] if len(parts) > 1 else ""
-            pdata = cfg.providers.get(pname, {})
-            val = pdata.get(key, "(not found)") if isinstance(pdata, dict) else "(not found)"
-            display = _mask(str(val)) if key in _MASKED_KEYS else str(val)
-            console.print(Text(f"  {dotpath} = {display}", style=GOLD))
+                print(f"  provider '{provider_name}' not found")
+                return
         else:
-            console.print(Text(f"  key '{dotpath}' not found", style="red"))
-        return
-
-    if args[0] == "set":
-        if len(args) < 3:
-            console.print(Text("  usage: franki config set <key> <value>", style="red"))
+            print(f"  unknown key '{key}'")
             return
-        dotpath, value = args[1], args[2]
-        ok = _set_value(cfg, dotpath, value)
-        if ok:
-            save_config(cfg)
-            console.print(Text(f"  {dotpath} = {value}", style=GOLD))
-        else:
-            console.print(Text(f"  unknown key '{dotpath}'", style="red"))
+        save_config(cfg)
+        print(f"  {key} = {value}")
         return
 
-    if args[0] == "reset":
-        console.print(Text("  Reset config to defaults? All API keys will be cleared. [y/N]: ", style="yellow"), end="")
-        try:
-            answer = input("").strip().lower()
-        except (KeyboardInterrupt, EOFError):
-            answer = ""
-        if answer == "y":
-            from franki.config import DEFAULT_CONFIG, FrankiConfig
-            import copy
-            cfg = FrankiConfig(**copy.deepcopy(DEFAULT_CONFIG))
-            save_config(cfg)
-            console.print(Text("  config reset to defaults.", style=GOLD))
-        else:
-            console.print(Text("  cancelled.", style=TEXT_DIM))
+    if args[0] == "get" and len(args) >= 2:
+        key = args[1]
+        simple = {"active_provider", "active_skill", "export_path", "auto_skill", "auto_accept"}
+        if key in simple:
+            print(f"  {key} = {getattr(cfg, key)}")
+        elif "." in key:
+            parts = key.split(".", 1)
+            pname, field = parts
+            pdata = cfg.providers.get(pname, {})
+            val = pdata.get(field, "(not found)") if isinstance(pdata, dict) else "(not found)"
+            display = _mask(str(val)) if field == "api_key" else str(val)
+            print(f"  {key} = {display}")
         return
 
-    console.print(Text(f"  unknown config command '{args[0]}'. Use: list, get, set, reset", style="red"))
+    print(f"  usage: franki config  (interactive)  or  franki config set <key> <value>")

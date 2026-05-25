@@ -5,8 +5,8 @@ from rich.console import Console
 from rich.text import Text
 from rich.table import Table
 from rich.rule import Rule
-from rich.panel import Panel
-from franki.skills import VALID_SKILLS, get_skill_icon
+
+from franki.skills import get_all_skill_names
 
 if TYPE_CHECKING:
     from franki.config import FrankiConfig
@@ -19,8 +19,6 @@ TEXT_DIM  = "#555555"
 TEXT_BODY = "#a8a8a8"
 BORDER    = "#2d2d2d"
 
-
-# ── Dispatch ──────────────────────────────────────────────────────────────────
 
 def handle_command(
     raw: str,
@@ -54,6 +52,8 @@ def handle_command(
         return _cmd_note(cfg, arg)
     if cmd == "/report":
         return _cmd_report(cfg, session)
+    if cmd == "/search":
+        return _cmd_search(cfg, session, arg)
 
     # ── Navigation ────────────────────────────────────────────────────────────
     if cmd == "/skill":
@@ -63,9 +63,7 @@ def handle_command(
     if cmd == "/scope":
         return _cmd_scope(session, arg, redraw_bar_fn)
 
-    # ── CEH / Security ────────────────────────────────────────────────────────
-    if cmd == "/quiz":
-        return _cmd_quiz(cfg, session)
+    # ── Security tools ────────────────────────────────────────────────────────
     if cmd == "/mitre":
         return _cmd_mitre(cfg, arg)
     if cmd == "/payload":
@@ -75,10 +73,6 @@ def handle_command(
     if cmd == "/explain":
         return _cmd_explain(cfg, arg)
 
-    # ── Search ───────────────────────────────────────────────────────────────
-    if cmd == "/search":
-        return _cmd_search(cfg, session, arg)
-
     # ── Memory ────────────────────────────────────────────────────────────────
     if cmd == "/remember":
         return _cmd_remember(arg, session)
@@ -87,27 +81,36 @@ def handle_command(
     if cmd == "/forget":
         return _cmd_forget(arg, session)
 
-    # ── System ────────────────────────────────────────────────────────────────
-    if cmd == "/connect":
-        return _cmd_connect(cfg, arg, save_cfg_fn, redraw_bar_fn)
-    if cmd == "/init":
-        return _cmd_init()
-    if cmd == "/config":
-        return _cmd_config()
+    # ── Providers / MCP ───────────────────────────────────────────────────────
     if cmd == "/providers":
-        return _cmd_providers(cfg)
+        return _cmd_providers(cfg, save_cfg_fn, redraw_bar_fn)
+    if cmd == "/mcp":
+        return _cmd_mcp(cfg, arg, save_cfg_fn)
+
+    # ── System ────────────────────────────────────────────────────────────────
+    if cmd == "/init":
+        return _cmd_init(cfg, save_cfg_fn, redraw_bar_fn)
+    if cmd == "/config":
+        return _cmd_config_edit(cfg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/help":
         return _cmd_help()
+    if cmd in ("/connect", "/connect delkaai", "/connect direct"):
+        # Legacy — guide user to /providers
+        console.print(Text(
+            "  /connect is no longer used — manage providers with /providers",
+            style=TEXT_DIM,
+        ))
+        return True
 
-    # ── Exit aliases — handled upstream in main.py before reaching here ──────
+    # Exit handled upstream in main.py
     if cmd in ("/exit", "/quit", "/q"):
-        raise SystemExit(0)  # fallback only if called outside the REPL
+        raise SystemExit(0)
 
-    console.print(Text(f"  unknown command '{cmd}' — /help for the full list", style=TEXT_DIM))
+    console.print(Text(f"  unknown command '{cmd}' — type /help for the full list", style=TEXT_DIM))
     return True
 
 
-# ── Conversation commands ─────────────────────────────────────────────────────
+# ── Conversation ──────────────────────────────────────────────────────────────
 
 def _cmd_clear(session: "Session") -> bool:
     session.clear()
@@ -150,44 +153,36 @@ def _cmd_context(cfg: "FrankiConfig", session: "Session") -> bool:
     from franki.utils.search import is_search_available
 
     stats   = session.message_stats()
-    icon    = get_skill_icon(session.skill)
     facts   = list_facts()
     usage   = skill_usage_counts()
     scopes  = list_scopes()
+    search  = is_search_available(cfg)
+    top_skill = max(usage, key=usage.__getitem__) if usage else None
 
-    delkaai_data = cfg.providers.get("delkaai", {})
-    delkaai_on   = isinstance(delkaai_data, dict) and delkaai_data.get("enabled", False)
-    conn_mode    = "delkaai" if delkaai_on else "direct"
-    search_avail = is_search_available(cfg)
-
-    top_skill = max(usage, key=lambda k: usage[k]) if usage else None
+    active_model = cfg.get_active_model()
+    active_label = f"{cfg.active_provider} / {active_model}" if active_model else cfg.active_provider or "(none)"
 
     table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style=TEXT_DIM, no_wrap=True, width=16)
+    table.add_column(style=TEXT_DIM, no_wrap=True, width=18)
     table.add_column(style=TEXT_BODY)
 
-    # ── Model / skill / scope ─────────────────────────────────────────────────
-    table.add_row("Model",      f"{cfg.get_active_provider()} / {cfg.get_active_model_name()}")
-    table.add_row("Skill",      f"{icon} {session.skill}")
-    table.add_row("Scope",      session.scope or "(not set)")
-    table.add_row("Connection", conn_mode)
-    table.add_row("",           "")
-
-    # ── Session stats ─────────────────────────────────────────────────────────
-    table.add_row("Messages",   f"user: {stats['user']}  ·  ai: {stats['assistant']}  ·  total: {stats['total']}")
-    table.add_row("Tokens",     f"~{stats['approx_tokens']:,} (approx)")
-    table.add_row("",           "")
-
-    # ── Memory ────────────────────────────────────────────────────────────────
-    table.add_row("Memory",     f"{len(facts)} fact(s)" + (f"  ·  preferred: {top_skill}" if top_skill else ""))
+    table.add_row("Provider / Model", active_label)
+    table.add_row("Skill",            session.skill)
+    table.add_row("Scope",            session.scope or "(not set)")
+    table.add_row("Auto-skill",       "on" if cfg.auto_skill else "off")
+    table.add_row("", "")
+    table.add_row("Messages",         f"user: {stats['user']}  assistant: {stats['assistant']}  total: {stats['total']}")
+    table.add_row("Tokens (approx)", f"~{stats['approx_tokens']:,}")
+    table.add_row("", "")
+    table.add_row("Memory",           f"{len(facts)} fact(s)" + (f"  preferred: {top_skill}" if top_skill else ""))
     if scopes:
-        table.add_row("Scopes",  ", ".join(scopes[:3]) + ("…" if len(scopes) > 3 else ""))
-    table.add_row("",           "")
-
-    # ── System ────────────────────────────────────────────────────────────────
-    table.add_row("Search",     "available" if search_avail else "not configured")
-    table.add_row("Export",     cfg.export_path)
-    table.add_row("Version",    f"franki v{__version__}")
+        table.add_row("Scopes", ", ".join(scopes[:3]) + ("..." if len(scopes) > 3 else ""))
+    table.add_row("", "")
+    table.add_row("Search",           "available" if search else "not configured")
+    table.add_row("Export path",      cfg.export_path)
+    table.add_row("Auto-accept",      "on" if cfg.auto_accept else "off")
+    table.add_row("MCP servers",      str(len(cfg.mcp)) or "none")
+    table.add_row("Version",          f"franki v{__version__}")
 
     console.print()
     console.print(table)
@@ -195,13 +190,13 @@ def _cmd_context(cfg: "FrankiConfig", session: "Session") -> bool:
     return True
 
 
-# ── Output commands ───────────────────────────────────────────────────────────
+# ── Output ────────────────────────────────────────────────────────────────────
 
 def _cmd_export(cfg: "FrankiConfig", session: "Session") -> bool:
     from franki.exporter import export_session
     path = export_session(session, cfg)
     if path:
-        console.print(Text(f"  session saved → {path}", style=GOLD))
+        console.print(Text(f"  saved → {path}", style=GOLD))
     else:
         console.print(Text("  export cancelled.", style=TEXT_DIM))
     return True
@@ -216,16 +211,15 @@ def _cmd_copy(session: "Session") -> bool:
     try:
         import pyperclip
         pyperclip.copy(clean)
-        console.print(Text("  Copied to clipboard.", style=GOLD))
+        console.print(Text("  copied to clipboard.", style=GOLD))
     except ImportError:
-        console.print(Text("  clipboard unavailable: pyperclip not installed", style="red"))
+        console.print(Text("  clipboard not available (pyperclip not installed)", style="red"))
     except Exception as exc:
-        console.print(Text(f"  clipboard error: {exc}  (headless system?)", style="red"))
+        console.print(Text(f"  clipboard error: {exc}", style="red"))
     return True
 
 
 def _strip_markup(text: str) -> str:
-    """Remove Rich markup tags like [bold], [#d4a853], [/bold] from text."""
     import re
     return re.sub(r'\[/?[^\]\s][^\]]*\]', '', text)
 
@@ -251,7 +245,49 @@ def _cmd_report(cfg: "FrankiConfig", session: "Session") -> bool:
     return True
 
 
-# ── Navigation commands ───────────────────────────────────────────────────────
+def _cmd_search(cfg: "FrankiConfig", session: "Session", query: str) -> bool:
+    import asyncio
+    from rich.status import Status
+    from franki.utils.search import web_search, SearchError
+
+    if not query.strip():
+        console.print(Text("  usage: /search <query>", style=TEXT_DIM))
+        return True
+
+    try:
+        with Status(f"[{TEXT_DIM}]searching...[/]", spinner="dots", spinner_style=GOLD, console=console):
+            result = asyncio.run(web_search(cfg, query))
+    except SearchError as exc:
+        console.print(Text(f"  search error: {exc}", style="red"))
+        return True
+
+    console.print()
+    console.print(Text(f"  search: {result.mode}  {len(result.results)} results", style=TEXT_DIM))
+    console.print(Rule(style=BORDER))
+
+    if result.answer:
+        console.print(Text(f"  {result.answer}", style=TEXT_BODY))
+        console.print()
+
+    for i, r in enumerate(result.results, 1):
+        title   = r.get("title", "(no title)")
+        url     = r.get("url", "")
+        snippet = (r.get("content") or "").strip()[:200]
+        if len(r.get("content", "")) > 200:
+            snippet += "..."
+        console.print(Text(f"  {i}. {title}", style=GOLD))
+        console.print(Text(f"     {url}", style=TEXT_DIM))
+        if snippet:
+            console.print(Text(f"     {snippet}", style=TEXT_BODY))
+        console.print()
+
+    session.add_user(result.as_context())
+    console.print(Text("  results added to context — ask me about them.", style=TEXT_DIM))
+    console.print()
+    return True
+
+
+# ── Navigation ────────────────────────────────────────────────────────────────
 
 def _cmd_skill(
     cfg: "FrankiConfig",
@@ -260,30 +296,85 @@ def _cmd_skill(
     save_cfg_fn,
     redraw_bar_fn,
 ) -> bool:
+    valid = get_all_skill_names()
     if not arg:
-        _show_skills(session)
+        console.print()
+        for skill in valid:
+            marker = ">" if skill == session.skill else " "
+            style = GOLD if skill == session.skill else TEXT_BODY
+            console.print(Text(f"  {marker} {skill}", style=style))
+        console.print(Text(f"\n  Add custom skills: ~/.config/franki/skills/<name>.md", style=TEXT_DIM))
+        console.print()
         return True
-    if arg not in VALID_SKILLS:
-        console.print(Text(f"  unknown skill '{arg}' — valid: {', '.join(VALID_SKILLS)}", style="red"))
+
+    if arg not in valid:
+        console.print(Text(f"  unknown skill '{arg}' — valid: {', '.join(valid)}", style="red"))
         return True
+
     session.set_skill(arg)
     cfg.active_skill = arg
     save_cfg_fn(cfg)
     redraw_bar_fn()
     from franki.memory import track_skill
     track_skill(arg)
-    console.print(Text(f"  skill → {get_skill_icon(arg)} {arg}", style=GOLD))
+    console.print(Text(f"  skill → {arg}", style=GOLD))
     return True
 
 
-def _cmd_model(cfg: "FrankiConfig", arg: str, save_cfg_fn, redraw_bar_fn) -> bool:
+def _cmd_model(
+    cfg: "FrankiConfig",
+    arg: str,
+    save_cfg_fn,
+    redraw_bar_fn,
+) -> bool:
     if not arg:
-        _show_models(cfg)
+        # Show current provider/model combos
+        console.print()
+        for name, pdata in cfg.providers.items():
+            if not isinstance(pdata, dict):
+                continue
+            model = pdata.get("model", "")
+            if not model:
+                continue
+            is_active = name == cfg.active_provider
+            marker = ">" if is_active else " "
+            style = GOLD if is_active else TEXT_BODY
+            console.print(Text(f"  {marker} {name} / {model}", style=style))
+        console.print(Text(
+            "\n  To switch: /model <provider>/<model>\n"
+            "  To add a provider: /providers",
+            style=TEXT_DIM,
+        ))
+        console.print()
         return True
-    cfg.active_model = arg
+
+    # Expect "provider/model" format
+    if "/" not in arg:
+        console.print(Text(
+            f"  format: /model <provider>/<model>  (e.g. /model groq/llama-3.3-70b-versatile)\n"
+            f"  use /model to see configured providers",
+            style="red",
+        ))
+        return True
+
+    parts = arg.split("/", 1)
+    provider_name = parts[0].strip()
+    model_name = parts[1].strip()
+
+    if provider_name not in cfg.providers:
+        console.print(Text(
+            f"  provider '{provider_name}' not configured — add it with /providers",
+            style="red",
+        ))
+        return True
+
+    cfg.active_provider = provider_name
+    if isinstance(cfg.providers[provider_name], dict):
+        cfg.providers[provider_name]["model"] = model_name
+
     save_cfg_fn(cfg)
     redraw_bar_fn()
-    console.print(Text(f"  model → {arg}", style=GOLD))
+    console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
     return True
 
 
@@ -301,13 +392,7 @@ def _cmd_scope(session: "Session", arg: str, redraw_bar_fn) -> bool:
     return True
 
 
-# ── CEH / Security commands ───────────────────────────────────────────────────
-
-def _cmd_quiz(cfg: "FrankiConfig", session: "Session") -> bool:
-    from franki.quiz import run_quiz
-    run_quiz(cfg, session)
-    return True
-
+# ── Security tools ────────────────────────────────────────────────────────────
 
 def _cmd_mitre(cfg: "FrankiConfig", arg: str) -> bool:
     from franki.mitre import run_mitre
@@ -333,60 +418,7 @@ def _cmd_explain(cfg: "FrankiConfig", arg: str) -> bool:
     return True
 
 
-# ── Search command ────────────────────────────────────────────────────────────
-
-def _cmd_search(cfg: "FrankiConfig", session: "Session", query: str) -> bool:
-    import asyncio
-    from rich.table import Table
-    from rich.rule import Rule
-    from rich.status import Status
-    from franki.utils.search import web_search, SearchError
-
-    if not query.strip():
-        console.print(Text("  usage: /search <query>", style=TEXT_DIM))
-        return True
-
-    try:
-        with Status(
-            f"[{TEXT_DIM}] searching...[/]",
-            spinner="dots",
-            spinner_style=GOLD,
-            console=console,
-        ):
-            result = asyncio.run(web_search(cfg, query))
-    except SearchError as exc:
-        console.print(Text(f"  search error: {exc}", style="red"))
-        return True
-
-    console.print()
-    console.print(Text(f"  Web search  ·  {result.mode}  ·  {len(result.results)} results", style=TEXT_DIM))
-    console.print(Rule(style=BORDER))
-
-    if result.answer:
-        console.print(Text(f"  {result.answer}", style=TEXT_BODY))
-        console.print()
-
-    for i, r in enumerate(result.results, 1):
-        title = r.get("title", "(no title)")
-        url   = r.get("url", "")
-        snippet = (r.get("content") or "").strip()[:200]
-        if len(r.get("content", "")) > 200:
-            snippet += "…"
-
-        console.print(Text(f"  {i}. {title}", style=GOLD))
-        console.print(Text(f"     {url}", style=TEXT_DIM))
-        if snippet:
-            console.print(Text(f"     {snippet}", style=TEXT_BODY))
-        console.print()
-
-    # Inject results into session so the AI can reference them immediately
-    session.add_user(result.as_context())
-    console.print(Text("  results injected into context — ask me about them.", style=TEXT_DIM))
-    console.print()
-    return True
-
-
-# ── Memory commands ───────────────────────────────────────────────────────────
+# ── Memory ────────────────────────────────────────────────────────────────────
 
 def _cmd_remember(text: str, session: "Session") -> bool:
     if not text:
@@ -401,7 +433,6 @@ def _cmd_remember(text: str, session: "Session") -> bool:
 
 def _cmd_memory() -> bool:
     from franki import memory
-    from rich.table import Table
 
     facts  = memory.list_facts()
     scopes = memory.list_scopes()
@@ -409,7 +440,7 @@ def _cmd_memory() -> bool:
     notes  = memory.list_notes()
 
     if not any([facts, scopes, usage, notes]):
-        console.print(Text("  no memory yet. Use /remember, /skill, /scope, or /note.", style=TEXT_DIM))
+        console.print(Text("  no memory yet. Use /remember, /note, or /scope.", style=TEXT_DIM))
         return True
 
     console.print()
@@ -440,7 +471,7 @@ def _cmd_memory() -> bool:
         t.add_column(style=TEXT_DIM, no_wrap=True, width=12)
         t.add_column(style=TEXT_BODY)
         for skill, count in sorted(usage.items(), key=lambda x: -x[1]):
-            t.add_row(skill, f"{count}×")
+            t.add_row(skill, f"{count}x")
         console.print(t)
         console.print()
 
@@ -479,137 +510,232 @@ def _cmd_forget(arg: str, session: "Session") -> bool:
     return True
 
 
-# ── System commands ───────────────────────────────────────────────────────────
+# ── Providers ────────────────────────────────────────────────────────────────
 
-def _cmd_connect(
+def _cmd_providers(
     cfg: "FrankiConfig",
-    arg: str,
     save_cfg_fn,
     redraw_bar_fn,
 ) -> bool:
-    arg = arg.lower().strip()
-
-    if not arg:
-        _show_connection(cfg)
-        return True
-
-    if arg == "delkaai":
-        return _connect_delkaai(cfg, save_cfg_fn, redraw_bar_fn)
-
-    if arg == "direct":
-        return _connect_direct(cfg, save_cfg_fn, redraw_bar_fn)
-
-    console.print(Text(f"  unknown connection mode '{arg}' — try 'delkaai' or 'direct'", style="red"))
-    return True
-
-
-def _show_connection(cfg: "FrankiConfig") -> None:
-    delkaai_data = cfg.providers.get("delkaai", {})
-    enabled = isinstance(delkaai_data, dict) and delkaai_data.get("enabled", False)
-    mode_label = "delkaai" if enabled else "direct"
-    style = GOLD if enabled else TEXT_BODY
-    console.print()
-    console.print(Text(f"  connection mode: {mode_label}", style=style))
-    if enabled:
-        url = delkaai_data.get("url", "https://api.delkaai.com")
-        console.print(Text(f"  endpoint: {url}", style=TEXT_DIM))
     console.print()
 
+    if cfg.providers:
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column(style=GOLD, no_wrap=True, width=14)
+        table.add_column(style=TEXT_BODY, no_wrap=True, width=36)
+        table.add_column(style=TEXT_DIM)
 
-def _connect_delkaai(cfg: "FrankiConfig", save_cfg_fn, redraw_bar_fn) -> bool:
-    import getpass
-    key = cfg.get_provider_key("delkaai")
-    if not key:
-        console.print(Text("  Enter your DelkaAI API key (hidden):", style=TEXT_DIM))
+        for name, pdata in cfg.providers.items():
+            if not isinstance(pdata, dict):
+                continue
+            model    = pdata.get("model", "(no model)")
+            key      = cfg.get_provider_key(name)
+            is_active = name == cfg.active_provider
+            priority = pdata.get("priority", "—")
+
+            if is_active:
+                status = Text("active", style=GOLD)
+            elif key or not pdata.get("key_required", True):
+                status = Text("ready", style=TEXT_BODY)
+            else:
+                status = Text("no key", style="red")
+
+            table.add_row(name, f"{name} / {model}", status)
+
+        console.print(table)
+    else:
+        console.print(Text("  no providers configured.", style=TEXT_DIM))
+
+    console.print()
+    console.print(Text(
+        "  Options:\n"
+        "    a — add a provider\n"
+        "    r — remove a provider\n"
+        "    d — set default provider\n"
+        "    q — done",
+        style=TEXT_DIM,
+    ))
+    console.print()
+
+    while True:
+        console.print(Text("  choice: ", style=TEXT_DIM), end="")
         try:
-            key = getpass.getpass("  key: ").strip()
+            choice = input("").strip().lower()
         except (KeyboardInterrupt, EOFError):
-            console.print(Text("  cancelled.", style=TEXT_DIM))
-            return True
-        if not key:
-            console.print(Text("  no key entered — aborted.", style=TEXT_DIM))
-            return True
-        if not isinstance(cfg.providers.get("delkaai"), dict):
-            cfg.providers["delkaai"] = {}
-        cfg.providers["delkaai"]["api_key"] = key
-
-    if not isinstance(cfg.providers.get("delkaai"), dict):
-        cfg.providers["delkaai"] = {}
-    cfg.providers["delkaai"]["enabled"] = True
-    cfg.mode = "delkaai"
-    cfg.active_model = "delkaai/auto"
-    save_cfg_fn(cfg)
-    redraw_bar_fn()
-    console.print(Text("  connected to DelkaAI. Falling back to direct providers if unavailable.", style=GOLD))
-    return True
-
-
-def _connect_direct(cfg: "FrankiConfig", save_cfg_fn, redraw_bar_fn) -> bool:
-    if isinstance(cfg.providers.get("delkaai"), dict):
-        cfg.providers["delkaai"]["enabled"] = False
-    cfg.mode = "direct"
-
-    # Restore to first configured direct provider
-    for name, pdata in cfg.providers.items():
-        if name == "delkaai" or not isinstance(pdata, dict):
-            continue
-        if cfg.get_provider_key(name) and pdata.get("models"):
-            cfg.active_model = f"{name}/{pdata['models'][0]}"
+            console.print()
             break
 
+        if choice in ("q", ""):
+            break
+        elif choice == "a":
+            from franki.setup_wizard import _add_provider
+            _add_provider(cfg, is_first=False)
+            save_cfg_fn(cfg)
+            if not cfg.active_provider:
+                cfg.active_provider = list(cfg.providers.keys())[0]
+                save_cfg_fn(cfg)
+            redraw_bar_fn()
+        elif choice == "r":
+            if not cfg.providers:
+                console.print(Text("  no providers to remove.", style=TEXT_DIM))
+                continue
+            names = list(cfg.providers.keys())
+            for i, name in enumerate(names, 1):
+                console.print(Text(f"  {i}. {name}", style=TEXT_BODY))
+            console.print(Text("  provider to remove: ", style=TEXT_DIM), end="")
+            try:
+                sel = input("").strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+                continue
+            target = ""
+            if sel.isdigit():
+                idx = int(sel) - 1
+                if 0 <= idx < len(names):
+                    target = names[idx]
+            elif sel in names:
+                target = sel
+            if target:
+                del cfg.providers[target]
+                if cfg.active_provider == target:
+                    first = cfg.first_configured_provider()
+                    cfg.active_provider = first or ""
+                save_cfg_fn(cfg)
+                redraw_bar_fn()
+                console.print(Text(f"  removed {target}.", style=GOLD))
+            else:
+                console.print(Text("  not found.", style="red"))
+        elif choice == "d":
+            if not cfg.providers:
+                console.print(Text("  no providers configured.", style=TEXT_DIM))
+                continue
+            names = list(cfg.providers.keys())
+            for i, name in enumerate(names, 1):
+                marker = ">" if name == cfg.active_provider else " "
+                console.print(Text(f"  {i}. {marker} {name}", style=TEXT_BODY))
+            console.print(Text("  set default: ", style=TEXT_DIM), end="")
+            try:
+                sel = input("").strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+                continue
+            target = ""
+            if sel.isdigit():
+                idx = int(sel) - 1
+                if 0 <= idx < len(names):
+                    target = names[idx]
+            elif sel in names:
+                target = sel
+            if target:
+                cfg.active_provider = target
+                save_cfg_fn(cfg)
+                redraw_bar_fn()
+                console.print(Text(f"  default → {target}", style=GOLD))
+            else:
+                console.print(Text("  not found.", style="red"))
+        else:
+            console.print(Text("  type a, r, d, or q", style=TEXT_DIM))
+
+    return True
+
+
+# ── MCP ───────────────────────────────────────────────────────────────────────
+
+def _cmd_mcp(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
+    parts = arg.split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+
+    if not sub or sub == "list":
+        console.print()
+        if not cfg.mcp:
+            console.print(Text("  no MCP servers configured.", style=TEXT_DIM))
+            console.print(Text(
+                "  Add one with: /mcp add",
+                style=TEXT_DIM,
+            ))
+        else:
+            table = Table(show_header=False, box=None, padding=(0, 2))
+            table.add_column(style=GOLD, no_wrap=True, width=16)
+            table.add_column(style=TEXT_BODY)
+            table.add_column(style=TEXT_DIM)
+            for name, mdata in cfg.mcp.items():
+                cmd = mdata.get("command", "")
+                args = " ".join(mdata.get("args", []))
+                enabled = "enabled" if mdata.get("enabled", True) else "disabled"
+                table.add_row(name, f"{cmd} {args}".strip(), enabled)
+            console.print(table)
+        console.print()
+        return True
+
+    if sub == "add":
+        console.print()
+        console.print(Text("  Add MCP server", style=f"bold {GOLD}"))
+        console.print(Text(
+            "  MCP (Model Context Protocol) servers provide tools to the AI.\n"
+            "  Example: filesystem server, GitHub, databases, etc.",
+            style=TEXT_DIM,
+        ))
+        console.print()
+        try:
+            console.print(Text("  name (e.g. filesystem): ", style=TEXT_DIM), end="")
+            name = input("").strip()
+            if not name:
+                console.print(Text("  cancelled.", style=TEXT_DIM))
+                return True
+            console.print(Text("  command (e.g. npx): ", style=TEXT_DIM), end="")
+            command = input("").strip()
+            console.print(Text("  args (space-separated, e.g. -y @modelcontextprotocol/server-filesystem /path): ", style=TEXT_DIM), end="")
+            args_raw = input("").strip()
+            args = args_raw.split() if args_raw else []
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            console.print(Text("  cancelled.", style=TEXT_DIM))
+            return True
+
+        cfg.mcp[name] = {
+            "command": command,
+            "args": args,
+            "enabled": True,
+        }
+        save_cfg_fn(cfg)
+        console.print(Text(f"  MCP server '{name}' added.", style=GOLD))
+        return True
+
+    if sub == "remove":
+        name = parts[1] if len(parts) > 1 else ""
+        if not name:
+            console.print(Text("  usage: /mcp remove <name>", style=TEXT_DIM))
+            return True
+        if name in cfg.mcp:
+            del cfg.mcp[name]
+            save_cfg_fn(cfg)
+            console.print(Text(f"  removed MCP server '{name}'.", style=GOLD))
+        else:
+            console.print(Text(f"  MCP server '{name}' not found.", style="red"))
+        return True
+
+    console.print(Text("  usage: /mcp  |  /mcp add  |  /mcp remove <name>", style=TEXT_DIM))
+    return True
+
+
+# ── System ────────────────────────────────────────────────────────────────────
+
+def _cmd_init(cfg: "FrankiConfig", save_cfg_fn, redraw_bar_fn) -> bool:
+    from franki.setup_wizard import run_wizard
+    updated = run_wizard(existing_cfg=cfg)
+    # Update in-place so the running session uses new provider immediately
+    cfg.providers = updated.providers
+    cfg.active_provider = updated.active_provider
+    cfg.auto_skill = updated.auto_skill
+    cfg.export_path = updated.export_path
     save_cfg_fn(cfg)
     redraw_bar_fn()
-    console.print(Text("  switched to direct providers.", style=GOLD))
     return True
 
 
-def _cmd_init() -> bool:
-    from franki.setup_wizard import run_wizard
-    run_wizard()
-    return True
-
-
-def _cmd_config() -> bool:
-    from franki.config_cmd import run_config
-    run_config([])
-    return True
-
-
-def _cmd_providers(cfg: "FrankiConfig") -> bool:
-    active_provider = cfg.get_active_provider()
-    console.print()
-
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style=GOLD, no_wrap=True, width=14)
-    table.add_column(style=TEXT_BODY, no_wrap=True, width=16)
-    table.add_column(style=TEXT_DIM)
-
-    for name, pdata in cfg.providers.items():
-        if not isinstance(pdata, dict):
-            continue
-        key = cfg.get_provider_key(name)
-        priority = pdata.get("priority", "—")
-        is_active = name == active_provider and key
-
-        if name == "delkaai":
-            enabled = pdata.get("enabled", False)
-            status = Text("● enabled", style=GOLD) if enabled else Text("○ disabled", style=TEXT_DIM)
-            table.add_row(name, status, f"priority {priority}  ·  Phase 4")
-            continue
-
-        if key:
-            status_str = "● configured"
-            suffix = "  [active]" if is_active else f"  priority {priority}"
-            style = GOLD if is_active else TEXT_BODY
-        else:
-            status_str = "○ not configured"
-            suffix = f"  priority {priority}  ·  franki config set {name}.api_key <key>"
-            style = TEXT_DIM
-
-        table.add_row(name, Text(status_str, style=style), suffix)
-
-    console.print(table)
-    console.print()
+def _cmd_config_edit(cfg: "FrankiConfig", save_cfg_fn, redraw_bar_fn) -> bool:
+    from franki.config_cmd import run_interactive_config
+    run_interactive_config(cfg, save_cfg_fn, redraw_bar_fn)
     return True
 
 
@@ -619,82 +745,57 @@ def _cmd_help() -> bool:
     sections = [
         ("Conversation", [
             ("/clear",             "clear conversation history"),
-            ("/compact",           "summarise history to save context, keep going"),
+            ("/compact",           "summarise history to save context"),
             ("/rewind",            "undo the last exchange"),
-            ("/history",           "show current session conversation log"),
-            ("/context",           "show full session dashboard: model, memory, search, tokens"),
+            ("/history",           "show conversation log for this session"),
+            ("/context",           "session dashboard: model, memory, tokens"),
         ]),
         ("Output", [
-            ("/export",            "save session to Obsidian vault as markdown"),
-            ("/copy",              "copy the last AI response to clipboard"),
-            ("/note <text>",       "save a timestamped finding note"),
-            ("/report",            "generate a pentest or SOC report from the session"),
-            ("/search <query>",    "web search via Tavily — injects results into context"),
+            ("/export",            "save session as markdown"),
+            ("/copy",              "copy last AI response to clipboard"),
+            ("/note <text>",       "save a timestamped note"),
+            ("/report",            "generate a report from the session"),
+            ("/search <query>",    "web search — injects results into context"),
         ]),
         ("Navigation", [
-            ("/skill <name>",      "switch skill: coding / pentest / soc / ceh"),
-            ("/model <name>",      "switch AI model"),
-            ("/scope <ip/cidr>",   "set pentest target scope"),
-            ("/scope clear",       "remove active scope"),
+            ("/skill [name]",      "switch skill  (coding / pentest / soc / security + custom)"),
+            ("/model [name]",      "switch model  (format: provider/model-name)"),
+            ("/scope [ip/cidr]",   "set pentest target scope"),
+            ("/scope clear",       "clear active scope"),
         ]),
-        ("CEH / Security", [
-            ("/quiz",              "CEH v13 flashcard quiz mode"),
+        ("Security tools", [
             ("/mitre <behaviour>", "map a behaviour to MITRE ATT&CK"),
             ("/payload <type>",    "suggest payloads for an attack type"),
             ("/tools <task>",      "suggest the right tools for a task"),
-            ("/explain <tool>",    "explain a tool, its flags, and usage"),
+            ("/explain <tool>",    "explain a tool and its usage"),
         ]),
         ("Memory", [
             ("/remember <fact>",   "save a fact to long-term memory"),
-            ("/memories",          "list all saved memory, scopes, skill usage, notes"),
+            ("/memories",          "list all saved memory, scopes, notes"),
             ("/forget <id|all>",   "remove a fact by id, or clear all memory"),
         ]),
+        ("Providers / MCP", [
+            ("/providers",         "add, remove, or set default provider"),
+            ("/mcp",               "list MCP server connections"),
+            ("/mcp add",           "add an MCP server"),
+            ("/mcp remove <name>", "remove an MCP server"),
+        ]),
         ("System", [
-            ("/connect",           "show connection mode (delkaai / direct)"),
-            ("/connect delkaai",   "switch to DelkaAI backend"),
-            ("/connect direct",    "switch back to direct providers"),
-            ("/init",              "re-run the API key setup wizard"),
-            ("/config",            "open the config editor"),
-            ("/providers",         "show provider status and configuration"),
-            ("/help",              "show this command table"),
-            ("/quit",              "exit (prompts to save session)"),
+            ("/init",              "re-run the provider setup wizard"),
+            ("/config",            "open the interactive config editor"),
+            ("/help",              "show this command list"),
+            ("exit  or  quit",     "exit (prompts to save session)"),
         ]),
     ]
 
     for section_name, rows in sections:
-        table = Table(show_header=False, box=None, padding=(0, 2))
-        table.add_column(style=GOLD, no_wrap=True, width=26)
-        table.add_column(style=TEXT_BODY)
-
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        t.add_column(style=GOLD, no_wrap=True, width=28)
+        t.add_column(style=TEXT_BODY)
         console.print(Text(f"  {section_name}", style=f"bold {GOLD}"))
         for cmd, desc in rows:
-            table.add_row(cmd, desc)
-        console.print(table)
+            t.add_row(cmd, desc)
+        console.print(t)
         console.print()
 
     return True
-
-
-# ── Display helpers ───────────────────────────────────────────────────────────
-
-def _show_skills(session: "Session") -> None:
-    console.print()
-    for skill in VALID_SKILLS:
-        icon = get_skill_icon(skill)
-        marker = "●" if skill == session.skill else " "
-        style = GOLD if skill == session.skill else TEXT_BODY
-        console.print(Text(f"  {marker} {icon} {skill}", style=style))
-    console.print()
-
-
-def _show_models(cfg: "FrankiConfig") -> None:
-    console.print()
-    for name, pdata in cfg.providers.items():
-        if not isinstance(pdata, dict) or name == "delkaai":
-            continue
-        for m in pdata.get("models", []):
-            full = f"{name}/{m}"
-            marker = "●" if full == cfg.active_model else " "
-            style = GOLD if full == cfg.active_model else TEXT_BODY
-            console.print(Text(f"  {marker} {full}", style=style))
-    console.print()
