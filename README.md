@@ -9,6 +9,18 @@ It supports multiple free AI providers with automatic fallback when one hits a r
 ## Install
 
 ```bash
+pipx install franki-cli
+```
+
+> **Why pipx?** franki is a CLI tool. `pipx` installs it in an isolated environment
+> and puts the `franki` command on your PATH — no venv setup needed.
+>
+> Install pipx first if you don't have it: `sudo apt install pipx && pipx ensurepath`
+
+Or with pip in a virtual environment:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install franki-cli
 ```
 
