@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "franki"
-version = "0.2.0"
+version = "0.1.0"
 description = "AI-powered CLI assistant for coding, pentesting, and SOC work"
 authors = [{name = "Frank Dela Nutsukpuie", email = "frankdela@example.com"}]
 license = {text = "MIT"}
