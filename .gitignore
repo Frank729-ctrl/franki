@@ -8,7 +8,7 @@ build/
 .venv/
 venv/
 .eggs/
-
+.claude
 # franki user config — never commit keys
 config.json
 franki_global_update_prompt.md
