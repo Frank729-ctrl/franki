@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "franki"
+name = "franki-cli"
 version = "0.1.0"
 description = "AI-powered CLI assistant for coding, pentesting, and SOC work"
 authors = [{name = "Frank Dela Nutsukpuie", email = "frankdela@example.com"}]
