@@ -334,6 +334,10 @@ def _maybe_warn_tokens(session: Session, cfg: FrankiConfig) -> None:
 def main() -> None:
     args = sys.argv[1:]
 
+    if args and args[0] in ("--version", "-V"):
+        print(f"franki {__version__}")
+        return
+
     if args and args[0] == "init":
         from franki.setup_wizard import run_wizard
         run_wizard()

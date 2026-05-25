@@ -14,3 +14,4 @@ config.json
 franki_global_update_prompt.md
 FRANKI.md
 franki_logo.svg
+.gitignore
