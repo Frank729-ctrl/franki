@@ -92,16 +92,8 @@ def handle_command(
 
     # ── Providers / MCP ───────────────────────────────────────────────────────
     if cmd == "/providers":
-        if arg == "add":
-            from franki.setup_wizard import _add_provider
-            _add_provider(cfg, is_first=False)
-            save_cfg_fn(cfg)
-            if not cfg.active_provider:
-                cfg.active_provider = cfg.first_configured_provider() or ""
-                save_cfg_fn(cfg)
-            redraw_bar_fn()
-            return True
-        return _cmd_providers(cfg, save_cfg_fn, redraw_bar_fn)
+        # /providers is now an alias for /model — keep it working for muscle memory
+        return _cmd_model(cfg, arg, save_cfg_fn, redraw_bar_fn, session)
     if cmd == "/ollama":
         return _cmd_ollama(cfg, arg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/mcp":
@@ -494,85 +486,149 @@ def _cmd_model(
     redraw_bar_fn,
     session: "Session | None" = None,
 ) -> bool:
+
+    def _switch(provider_name: str, model_name: str) -> None:
+        cfg.active_provider = provider_name
+        if isinstance(cfg.providers.get(provider_name), dict):
+            cfg.providers[provider_name]["model"] = model_name
+        save_cfg_fn(cfg)
+        redraw_bar_fn()
+        if session is not None:
+            from franki.environment import build_environment_block
+            session.set_env_context(build_environment_block(cfg))
+        console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
+
+    def _show_table(interactive: bool = False) -> None:
+        console.print()
+        if not cfg.providers:
+            console.print(Text("  no providers configured.", style=TEXT_DIM))
+        else:
+            for i, (name, pdata) in enumerate(cfg.providers.items(), 1):
+                if not isinstance(pdata, dict):
+                    continue
+                model    = pdata.get("model", "(no model)")
+                is_active = name == cfg.active_provider
+                marker   = ">" if is_active else " "
+                style    = GOLD if is_active else TEXT_BODY
+                console.print(Text(f"  {marker} {i}. {name}  ·  {model}", style=style))
+        if interactive:
+            console.print()
+            console.print(Text(
+                "  Type a name, number, or model to switch.\n"
+                "  Commands: add  remove <name>  q",
+                style=TEXT_DIM,
+            ))
+        console.print()
+
+    # ── No arg → interactive menu ─────────────────────────────────────────────
     if not arg:
-        # Show current provider/model combos
-        console.print()
-        for name, pdata in cfg.providers.items():
-            if not isinstance(pdata, dict):
+        _show_table(interactive=True)
+        while True:
+            console.print(Text("  > ", style=GOLD), end="")
+            try:
+                raw = input("").strip()
+            except (KeyboardInterrupt, EOFError, OSError):
+                console.print()
+                break
+            if not raw or raw.lower() == "q":
+                break
+            if raw.lower() == "add":
+                from franki.setup_wizard import _add_provider
+                _add_provider(cfg, is_first=False)
+                save_cfg_fn(cfg)
+                if not cfg.active_provider:
+                    cfg.active_provider = cfg.first_configured_provider() or ""
+                    save_cfg_fn(cfg)
+                redraw_bar_fn()
+                _show_table(interactive=True)
                 continue
-            model = pdata.get("model", "")
-            if not model:
+            if raw.lower().startswith("remove "):
+                target = raw[7:].strip()
+                if target in cfg.providers:
+                    del cfg.providers[target]
+                    if cfg.active_provider == target:
+                        cfg.active_provider = cfg.first_configured_provider() or ""
+                    save_cfg_fn(cfg)
+                    redraw_bar_fn()
+                    console.print(Text(f"  removed {target}", style=GOLD))
+                    _show_table(interactive=True)
+                else:
+                    console.print(Text(f"  '{target}' not found", style="red"))
                 continue
-            is_active = name == cfg.active_provider
-            marker = ">" if is_active else " "
-            style = GOLD if is_active else TEXT_BODY
-            console.print(Text(f"  {marker} {name} / {model}", style=style))
-        console.print(Text(
-            "\n  To switch: /model <provider>/<model>\n"
-            "  To add a provider: /providers",
-            style=TEXT_DIM,
-        ))
-        console.print()
+            # Try as number
+            names = list(cfg.providers.keys())
+            if raw.isdigit():
+                idx = int(raw) - 1
+                if 0 <= idx < len(names):
+                    raw = names[idx]
+            _do_switch(cfg, raw, save_cfg_fn, redraw_bar_fn, session, _switch, _show_table)
         return True
 
-    if "/" not in arg:
-        target = arg.strip()
-        # Check if it's a provider name
-        if target in cfg.providers:
-            cfg.active_provider = target
-            save_cfg_fn(cfg)
-            redraw_bar_fn()
-            model_name = cfg.providers[target].get("model", "")
-            console.print(Text(f"  switched to {target} / {model_name}", style=GOLD))
-            return True
-        # Search all providers for a matching model name
-        matches = [
-            (pname, pdata.get("model", ""))
-            for pname, pdata in cfg.providers.items()
-            if isinstance(pdata, dict) and pdata.get("model", "").lower() == target.lower()
-        ]
-        if matches:
-            provider_name, model_name = matches[0]
-            cfg.active_provider = provider_name
-            save_cfg_fn(cfg)
-            redraw_bar_fn()
-            console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
-            return True
-        # Not a provider or known model — set it as the model for the active provider
-        if cfg.active_provider and cfg.active_provider in cfg.providers:
-            cfg.providers[cfg.active_provider]["model"] = target
-            save_cfg_fn(cfg)
-            redraw_bar_fn()
-            console.print(Text(f"  model → {target}  (provider: {cfg.active_provider})", style=GOLD))
-            return True
-        console.print(Text(
-            f"  '{target}' not found — use /model <provider>/<model> or /providers to add a provider",
-            style="red",
-        ))
-        return True
-
-    parts = arg.split("/", 1)
-    provider_name = parts[0].strip()
-    model_name = parts[1].strip()
-
-    if provider_name not in cfg.providers:
-        console.print(Text(
-            f"  provider '{provider_name}' not configured — add it with /providers",
-            style="red",
-        ))
-        return True
-
-    cfg.active_provider = provider_name
-    if isinstance(cfg.providers[provider_name], dict):
-        cfg.providers[provider_name]["model"] = model_name
-
-    save_cfg_fn(cfg)
-    redraw_bar_fn()
-    if session is not None:
-        from franki.environment import build_environment_block
-        session.set_env_context(build_environment_block(cfg))
-    console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
+    # ── arg given → smart switch ──────────────────────────────────────────────
+    _do_switch(cfg, arg, save_cfg_fn, redraw_bar_fn, session, _switch, _show_table)
     return True
+
+
+def _do_switch(cfg, raw, save_cfg_fn, redraw_bar_fn, session, _switch, _show_table):
+    """Resolve a name/model string and switch, with interactive pick if ambiguous."""
+    # Exact provider match
+    if raw in cfg.providers:
+        model = cfg.providers[raw].get("model", "")
+        _switch(raw, model)
+        return
+
+    # provider/model format (handles models with slashes like openai/gpt-4o)
+    if "/" in raw:
+        parts = raw.split("/", 1)
+        pname, mname = parts[0].strip(), parts[1].strip()
+        if pname in cfg.providers:
+            _switch(pname, mname)
+            return
+
+    # Exact model name match across providers
+    matches = [
+        (pname, pdata.get("model", ""))
+        for pname, pdata in cfg.providers.items()
+        if isinstance(pdata, dict) and pdata.get("model", "").lower() == raw.lower()
+    ]
+    if len(matches) == 1:
+        _switch(matches[0][0], matches[0][1])
+        return
+
+    # Partial model name match
+    partial = [
+        (pname, pdata.get("model", ""))
+        for pname, pdata in cfg.providers.items()
+        if isinstance(pdata, dict) and raw.lower() in pdata.get("model", "").lower()
+    ]
+    if len(partial) == 1:
+        _switch(partial[0][0], partial[0][1])
+        return
+    if len(partial) > 1:
+        console.print(Text(f"  multiple matches for '{raw}':", style=TEXT_DIM))
+        for i, (p, m) in enumerate(partial, 1):
+            console.print(Text(f"    {i}. {p} / {m}", style=TEXT_BODY))
+        console.print(Text("  pick a number: ", style=TEXT_DIM), end="")
+        try:
+            sel = input("").strip()
+            if sel.isdigit():
+                idx = int(sel) - 1
+                if 0 <= idx < len(partial):
+                    _switch(partial[idx][0], partial[idx][1])
+                    return
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+        return
+
+    # Nothing matched — set as model name on active provider
+    if cfg.active_provider and cfg.active_provider in cfg.providers:
+        cfg.providers[cfg.active_provider]["model"] = raw
+        save_cfg_fn(cfg)
+        redraw_bar_fn()
+        console.print(Text(f"  model → {raw}  (provider: {cfg.active_provider})", style=GOLD))
+        return
+
+    console.print(Text(f"  '{raw}' not found — type 'add' to add a provider", style="red"))
 
 
 def _cmd_scope(session: "Session", arg: str, redraw_bar_fn) -> bool:
