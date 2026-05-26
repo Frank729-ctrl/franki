@@ -128,6 +128,8 @@ def handle_command(
         return _cmd_audit()
 
     # ── System ────────────────────────────────────────────────────────────────
+    if cmd == "/toolperms":
+        return _cmd_toolperms(cfg, arg, save_cfg_fn)
     if cmd == "/autocommit":
         return _cmd_autocommit(cfg, arg, save_cfg_fn)
     if cmd == "/auto":
@@ -1169,6 +1171,61 @@ def _cmd_template(session: "Session", arg: str) -> "bool | str":
     return True
 
 
+def _cmd_toolperms(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
+    """Manage per-tool permissions: always | ask | never."""
+    from rich.table import Table
+    parts = arg.strip().split(None, 1)
+    sub   = parts[0].lower() if parts else "list"
+    tool  = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "list" or not sub:
+        perms = getattr(cfg, "tool_permissions", {}) or {}
+        if not perms:
+            console.print(Text(
+                "  no overrides set — all tools use default (ask) behaviour",
+                style=TEXT_DIM,
+            ))
+        else:
+            t = Table(show_header=False, box=None, padding=(0, 2))
+            t.add_column(style=GOLD, no_wrap=True)
+            t.add_column(style=TEXT_BODY)
+            for tname, perm in sorted(perms.items()):
+                t.add_row(tname, perm)
+            console.print(t)
+        console.print(Text(
+            "  /toolperms allow|block|reset <tool_name>",
+            style=TEXT_DIM,
+        ))
+        return True
+
+    if sub in ("allow", "block", "reset") and not tool:
+        console.print(Text(f"  usage: /toolperms {sub} <tool_name>", style=TEXT_DIM))
+        return True
+
+    perms = dict(getattr(cfg, "tool_permissions", {}) or {})
+    if sub == "allow":
+        perms[tool] = "always"
+        cfg.tool_permissions = perms
+        save_cfg_fn(cfg)
+        console.print(Text(f"  {tool}: always allowed (no confirmation)", style=GOLD))
+    elif sub == "block":
+        perms[tool] = "never"
+        cfg.tool_permissions = perms
+        save_cfg_fn(cfg)
+        console.print(Text(f"  {tool}: blocked", style="red"))
+    elif sub == "reset":
+        perms.pop(tool, None)
+        cfg.tool_permissions = perms
+        save_cfg_fn(cfg)
+        console.print(Text(f"  {tool}: reset to default (ask)", style=TEXT_DIM))
+    else:
+        console.print(Text(
+            "  usage: /toolperms list | allow <tool> | block <tool> | reset <tool>",
+            style=TEXT_DIM,
+        ))
+    return True
+
+
 # ── Sandbox ───────────────────────────────────────────────────────────────────
 
 def _cmd_autocommit(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
@@ -1739,6 +1796,8 @@ def _cmd_help() -> bool:
             ("/auto on|off",            "enable or disable auto-accept mode"),
             ("/auto notify on|off",     "toggle task-done notifications"),
             ("/autocommit on|off",      "auto git-commit after each agent file edit"),
+            ("/toolperms list",              "show per-tool permission overrides"),
+            ("/toolperms allow|block <tool>","set a tool to always-allow or always-block"),
             ("/sandbox on|off",         "block all destructive tools (write, run, patch)"),
             ("/audit",                  "show recent tool execution log"),
             ("/init",                   "re-run the provider setup wizard"),

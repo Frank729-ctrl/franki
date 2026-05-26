@@ -55,6 +55,20 @@ if TYPE_CHECKING:
 
 _MAX_STEPS = 15  # safety cap on tool-call iterations
 
+import re as _re
+_SEEKING_PERMISSION = _re.compile(
+    r"\b(should i|shall i|do you want( me to)?|would you like( me to)?|want me to|may i)\b",
+    _re.IGNORECASE,
+)
+_PREMATURE_STOP = _re.compile(
+    r"\b(i(?:'ll| will| am going to)| let me |i need to |now i(?:'ll| will))\b",
+    _re.IGNORECASE,
+)
+_TASK_COMPLETE = _re.compile(
+    r"\b(done|complete[d]?|finish(?:ed)?|here(?:'s| is)|i(?:'ve| have) (?:updated|created|fixed|written|added|removed|refactored))\b",
+    _re.IGNORECASE,
+)
+
 
 # ── Provider routing for tool calls ──────────────────────────────────────────
 
@@ -179,9 +193,17 @@ def _confirm_tool(
     tool_name: str,
     args: dict,
     auto_accept: bool,
+    tool_permissions: "dict[str, str] | None" = None,
 ) -> bool:
-    if auto_accept:
+    perm = (tool_permissions or {}).get(tool_name)
+    if perm == "always" or auto_accept:
         return True
+    if perm == "never":
+        console.print(Text(
+            f"  blocked: '{tool_name}' is in your deny list  (/tools allow {tool_name} to unblock)",
+            style="red",
+        ))
+        return False
 
     console.print()
     if tool_name == "write_file":
@@ -393,6 +415,7 @@ async def run_agent(
     session.add_user(message)
     files_written: list[str] = []
     auto_accept    = getattr(cfg, "auto_accept", False)
+    tool_permissions = getattr(cfg, "tool_permissions", {}) or {}
     notify_on_done = getattr(cfg, "notify_on_done", True)
     sandbox        = getattr(session, "sandbox", False)
     _tracker       = getattr(session, "routing_tracker", None)
@@ -418,10 +441,33 @@ async def run_agent(
         tool_calls = msg.get("tool_calls") or []
         text       = (msg.get("content") or "").strip()
 
-        # ── No tool calls → final response ───────────────────────────────────
+        # ── No tool calls → check for premature stop then finalize ───────────
         if not tool_calls:
             if not text:
                 text = "Done."
+
+            # If model is seeking confirmation and auto_accept is on, nudge it once
+            if (
+                auto_accept
+                and _step < _MAX_STEPS - 2
+                and _SEEKING_PERMISSION.search(text)
+                and not _TASK_COMPLETE.search(text)
+            ):
+                session.add_tool_call_message({"role": "assistant", "content": text})
+                session.add_user("Yes, go ahead.")
+                continue
+
+            # If model announced intent but took no action on the very first step, nudge once
+            if (
+                _step == 0
+                and _tool_steps == 0
+                and _PREMATURE_STOP.search(text)
+                and not _TASK_COMPLETE.search(text)
+            ):
+                session.add_tool_call_message({"role": "assistant", "content": text})
+                session.add_user("Please proceed.")
+                continue
+
             session.add_assistant(text)
             console.print()
             render_response(console, text, prefix="  ● ")
@@ -481,6 +527,49 @@ async def run_agent(
                 _show_tool_result(console, fn_name, r)
                 results[tc["id"]] = r
 
+        # When auto-accepting, parallelize writes to non-conflicting paths
+        if auto_accept and len(other_batch) > 1:
+            seen_paths: set[str] = set()
+            parallel_writes: list[tuple] = []
+            remaining_other: list[tuple] = []
+            for item in other_batch:
+                tc2, fn2, fa2 = item
+                path2 = fa2.get("path", "")
+                if fn2 in WRITE_TOOLS and path2 and path2 not in seen_paths:
+                    seen_paths.add(path2)
+                    parallel_writes.append(item)
+                else:
+                    remaining_other.append(item)
+            if len(parallel_writes) > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                _pw_loop = asyncio.get_event_loop()
+                with ThreadPoolExecutor() as _pw_pool:
+                    _pw_futures = {
+                        tc2["id"]: _pw_loop.run_in_executor(
+                            _pw_pool, execute_tool, fn2, fa2
+                        )
+                        for tc2, fn2, fa2 in parallel_writes
+                    }
+                    _pw_results = await asyncio.gather(*_pw_futures.values(), return_exceptions=True)
+                for (tc2, fn2, fa2), res2 in zip(parallel_writes, _pw_results):
+                    r2 = str(res2) if isinstance(res2, Exception) else res2
+                    path2 = fa2.get("path", "")
+                    files_written.append(path2)
+                    _before2 = _read_snapshot(path2)
+                    after2   = fa2.get("content", "")
+                    if not after2 and Path(path2).exists():
+                        try:
+                            after2 = Path(path2).read_text(encoding="utf-8", errors="replace")
+                        except OSError:
+                            after2 = ""
+                    if _ct is not None:
+                        _ct.record(path2, _before2, after2, fn2)
+                    _show_write_diff(console, path2, _before2 or "", after2)
+                    _show_tool_result(console, fn2, r2)
+                    log_tool(fn2, fa2, r2)
+                    results[tc2["id"]] = r2
+                other_batch = remaining_other
+
         # Run write/exec tools sequentially with confirmation
         cancelled = False
         read_count = len(read_batch)
@@ -496,7 +585,7 @@ async def run_agent(
                 cancelled = True
                 continue
             if fn_name in NEEDS_CONFIRM or fn_name in _CUSTOM_TOOLS:
-                if not _confirm_tool(console, fn_name, fn_args, auto_accept):
+                if not _confirm_tool(console, fn_name, fn_args, auto_accept, tool_permissions):
                     results[tc["id"]] = "user declined — skipped"
                     cancelled = True
                     continue
