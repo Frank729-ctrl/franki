@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "franki-cli"
-version = "0.2.0"
+version = "0.1.2"
 description = "AI-powered CLI for coding, pentesting, and SOC work — bring your own models"
 authors = [{name = "Frank Dela Nutsukpuie", email = "frankdela@example.com"}]
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 requires-python = ">=3.11"
 keywords = ["ai", "cli", "pentesting", "soc", "coding", "groq", "openrouter", "ollama", "anthropic", "cohere", "azure"]
 classifiers = [
@@ -43,6 +43,9 @@ Repository = "https://github.com/Frank729-ctrl/franki"
 
 [project.scripts]
 franki = "franki.main:main"
+
+[tool.setuptools]
+license-files = []
 
 [tool.setuptools.packages.find]
 where = ["."]

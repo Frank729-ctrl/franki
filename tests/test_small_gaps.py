@@ -311,4 +311,4 @@ class TestFrankiInit:
             # Force re-import of original
             import franki  # noqa
 
-        assert version == "0.2.0"
+        assert version == "0.1.2"
