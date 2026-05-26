@@ -329,13 +329,26 @@ def list_background_ids() -> list[str]:
 def execute_tool(name: str, args: dict[str, Any]) -> str:
     try:
         if name == "read_file":
-            return _read_file(args["path"])
+            path = args.get("path") or args.get("file")
+            if not path:
+                return "error: missing required argument 'path'"
+            return _read_file(path)
         if name == "write_file":
-            return _write_file(args["path"], args["content"])
+            path = args.get("path") or args.get("file")
+            content = args.get("content") or args.get("text", "")
+            if not path:
+                return "error: missing required argument 'path'"
+            return _write_file(path, content)
         if name == "edit_file":
-            return _edit_file(args["path"], args["old_str"], args["new_str"])
+            path = args.get("path") or args.get("file")
+            if not path:
+                return "error: missing required argument 'path'"
+            return _edit_file(path, args.get("old_str", ""), args.get("new_str", ""))
         if name == "run_command":
-            return _run_command(args["command"])
+            cmd = args.get("command") or args.get("cmd") or args.get("shell")
+            if not cmd:
+                return "error: missing required argument 'command'"
+            return _run_command(cmd)
         if name == "list_directory":
             return _list_directory(args.get("path", "."))
         if name == "search_files":
@@ -347,7 +360,10 @@ def execute_tool(name: str, args: dict[str, Any]) -> str:
                 args.get("file_pattern", "*"),
             )
         if name == "run_background":
-            return _run_background(args["command"])
+            cmd = args.get("command") or args.get("cmd") or args.get("shell")
+            if not cmd:
+                return "error: missing required argument 'command'"
+            return _run_background(cmd)
         if name == "check_background":
             return _check_background(args["process_id"])
         if name == "stop_background":

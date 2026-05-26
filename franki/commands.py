@@ -515,20 +515,40 @@ def _cmd_model(
         console.print()
         return True
 
-    # Allow "/model groq" (no model) to just switch provider, keeping its current model
     if "/" not in arg:
-        provider_name = arg.strip()
-        if provider_name not in cfg.providers:
-            console.print(Text(
-                f"  provider '{provider_name}' not configured — add it with /providers",
-                style="red",
-            ))
+        target = arg.strip()
+        # Check if it's a provider name
+        if target in cfg.providers:
+            cfg.active_provider = target
+            save_cfg_fn(cfg)
+            redraw_bar_fn()
+            model_name = cfg.providers[target].get("model", "")
+            console.print(Text(f"  switched to {target} / {model_name}", style=GOLD))
             return True
-        cfg.active_provider = provider_name
-        save_cfg_fn(cfg)
-        redraw_bar_fn()
-        model_name = cfg.providers[provider_name].get("model", "")
-        console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
+        # Search all providers for a matching model name
+        matches = [
+            (pname, pdata.get("model", ""))
+            for pname, pdata in cfg.providers.items()
+            if isinstance(pdata, dict) and pdata.get("model", "").lower() == target.lower()
+        ]
+        if matches:
+            provider_name, model_name = matches[0]
+            cfg.active_provider = provider_name
+            save_cfg_fn(cfg)
+            redraw_bar_fn()
+            console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
+            return True
+        # Not a provider or known model — set it as the model for the active provider
+        if cfg.active_provider and cfg.active_provider in cfg.providers:
+            cfg.providers[cfg.active_provider]["model"] = target
+            save_cfg_fn(cfg)
+            redraw_bar_fn()
+            console.print(Text(f"  model → {target}  (provider: {cfg.active_provider})", style=GOLD))
+            return True
+        console.print(Text(
+            f"  '{target}' not found — use /model <provider>/<model> or /providers to add a provider",
+            style="red",
+        ))
         return True
 
     parts = arg.split("/", 1)

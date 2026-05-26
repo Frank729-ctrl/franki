@@ -57,7 +57,10 @@ async def _validate_key(api_key: str, base_url: str, model: str) -> tuple[bool, 
     except (ProviderError, ProviderRateLimitError) as exc:
         return False, str(exc)
     except Exception as exc:
-        return False, str(exc)
+        msg = str(exc)
+        if "Expecting value" in msg or "JSONDecodeError" in msg:
+            return False, "server returned non-JSON — check the base URL is an API endpoint (should end in /v1)"
+        return False, msg
 
 
 # ── Prompt helpers ────────────────────────────────────────────────────────────
@@ -138,6 +141,18 @@ def _add_provider(cfg: FrankiConfig, is_first: bool) -> bool:
             if not base_url:
                 console.print(Text("  base URL required — skipping", style="red"))
                 return False
+            if "?" in base_url:
+                console.print(Text(
+                    "  warning: URL has query parameters — this looks like a webpage, not an API endpoint.\n"
+                    "  The base URL should be the root API URL, e.g. https://api.example.com/v1",
+                    style="yellow",
+                ))
+            if "generativelanguage.googleapis.com/v1beta" in base_url and "/openai" not in base_url:
+                console.print(Text(
+                    "  tip: for OpenAI-compatible Gemini, append /openai to the URL:\n"
+                    "  https://generativelanguage.googleapis.com/v1beta/openai",
+                    style="yellow",
+                ))
         except (KeyboardInterrupt, EOFError):
             return False
         key_required = True
