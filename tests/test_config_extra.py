@@ -204,5 +204,5 @@ class TestFrankiConfigHelpers:
         assert cfg.local_first is False
         assert cfg.routing_strategy == "capability"
         assert cfg.auto_compact is True
-        assert cfg.auto_compact_threshold == pytest.approx(0.85)
+        assert cfg.auto_compact_threshold == pytest.approx(0.70)
         assert cfg.auto_compact_messages == 0

@@ -403,8 +403,15 @@ async def run_agent(
 
     for _step in range(_MAX_STEPS):
         # ── Call the AI with tools (streaming) ───────────────────────────────
+        _max_tool_chars = getattr(cfg, "tool_result_max_chars", 2000)
+        _max_turns      = getattr(cfg, "max_history_turns", 0)
         msg = await _call_with_tools(
-            cfg, session.get_messages(), session.skill, _tracker, console,
+            cfg,
+            session.get_messages_for_api(
+                tool_result_max_chars=int(_max_tool_chars) if isinstance(_max_tool_chars, int) else 2000,
+                max_history_turns=int(_max_turns) if isinstance(_max_turns, int) else 0,
+            ),
+            session.skill, _tracker, console,
             cost_tracker=_cost,
         )
 

@@ -174,9 +174,14 @@ async def _stream_response(
     live.update(Columns([spinner, Text(f"  {_opening}  ·  0.0s", style=TEXT_DIM)]))
 
     try:
+        _max_tool_chars = getattr(cfg, "tool_result_max_chars", 2000)
+        _max_turns      = getattr(cfg, "max_history_turns", 0)
         async for chunk in stream_with_fallback(
             cfg,
-            session.get_messages(),
+            session.get_messages_for_api(
+                tool_result_max_chars=_max_tool_chars if isinstance(_max_tool_chars, int) else 2000,
+                max_history_turns=_max_turns if isinstance(_max_turns, int) else 0,
+            ),
             skill=session.skill,
             tracker=routing_tracker,
             on_fallback=on_fallback,
