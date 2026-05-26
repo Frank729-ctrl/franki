@@ -94,7 +94,8 @@ async def _call_with_tools(
             except ProviderRateLimitError as exc:
                 last_err = exc
                 if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
+                    wait = exc.retry_after if exc.retry_after is not None else 2 ** attempt
+                    await asyncio.sleep(min(wait, 60.0))
                     continue
                 break
             except ProviderError:
