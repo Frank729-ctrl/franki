@@ -251,6 +251,27 @@ def _show_tool_call(
     console.print(Text(f"  {step_str}{label}  {detail}", style=TEXT_DIM))
 
 
+def _show_write_diff(console: "Console", path: str, before: str, after: str) -> None:
+    """Show a compact colored unified diff immediately after a file write/edit."""
+    import difflib
+    from rich.syntax import Syntax
+    before_lines = before.splitlines(keepends=True)
+    after_lines  = after.splitlines(keepends=True)
+    diff = list(difflib.unified_diff(
+        before_lines, after_lines,
+        fromfile=f"a/{path}", tofile=f"b/{path}",
+        n=2,
+    ))
+    if not diff:
+        return
+    shown = diff[:50]
+    extra = len(diff) - 50
+    diff_text = "".join(shown)
+    if extra > 0:
+        diff_text += f"\n    ... ({extra} more lines)"
+    console.print(Syntax(diff_text, "diff", theme="monokai", background_color="default"))
+
+
 def _show_tool_result(console: "Console", tool_name: str, result: str) -> None:
     if tool_name in WRITE_TOOLS:
         console.print(Text(f"    ✓  {result}", style=GOLD))
@@ -473,8 +494,9 @@ async def run_agent(
                     cancelled = True
                     continue
 
-            # Snapshot before write so /undo can restore
-            if fn_name in WRITE_TOOLS and _ct is not None:
+            # Snapshot before write for /undo and inline diff
+            _before: str | None = None
+            if fn_name in WRITE_TOOLS:
                 path = fn_args.get("path", "")
                 _before = _read_snapshot(path)
 
@@ -484,14 +506,15 @@ async def run_agent(
             if fn_name in WRITE_TOOLS:
                 path = fn_args.get("path", "")
                 files_written.append(path)
+                after_content = fn_args.get("content", "")
+                if not after_content and Path(path).exists():
+                    try:
+                        after_content = Path(path).read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        after_content = ""
                 if _ct is not None:
-                    after_content = fn_args.get("content", "")
-                    if not after_content and Path(path).exists():
-                        try:
-                            after_content = Path(path).read_text(encoding="utf-8", errors="replace")
-                        except OSError:
-                            after_content = ""
                     _ct.record(path, _before, after_content, fn_name)
+                _show_write_diff(console, path, _before or "", after_content)
 
             _show_tool_result(console, fn_name, result)
             results[tc["id"]] = result

@@ -229,3 +229,71 @@ def run_explain(args: list[str]) -> None:
         },
     ]
     _run_oneshot(messages, status_text="explaining...")
+
+
+# ── franki cmd ────────────────────────────────────────────────────────────────
+
+def run_cmd(args: list[str], piped_input: str | None = None) -> None:
+    """franki cmd <description> — generate a shell command and optionally run it."""
+    import subprocess
+
+    description = " ".join(args).strip()
+    if piped_input and not description:
+        description = piped_input
+    elif piped_input:
+        description = f"{description}\n\nContext:\n{piped_input}"
+
+    if not description:
+        console.print(Text(
+            "  usage: franki cmd <description of what you want to do>\n"
+            "  example: franki cmd 'find all TODO comments in this repo'",
+            style=TEXT_DIM,
+        ))
+        sys.exit(1)
+
+    import platform
+    shell_hint = "bash" if platform.system() != "Windows" else "PowerShell"
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"You are a {shell_hint} expert. Generate a single shell command for the user's request. "
+                "Return ONLY the command, no explanation, no markdown fences, no extra text."
+            ),
+        },
+        {"role": "user", "content": description},
+    ]
+
+    cfg = load_config()
+    if needs_setup() or not cfg.providers:
+        console.print(Text("  no providers configured — run 'franki init' first", style="yellow"))
+        sys.exit(1)
+
+    console.print()
+    try:
+        from franki.utils.ai import ask_ai
+        command = ask_ai(cfg, messages, console=console, status_text="generating command...").strip()
+    except Exception as exc:
+        console.print(Text(f"  error: {exc}", style="red"))
+        sys.exit(1)
+
+    console.print()
+    console.print(Text("  $ ", style=GOLD), end="")
+    console.print(Text(command, style="bold white"))
+    console.print()
+    console.print(Text("  run it? [y/N] ", style=TEXT_DIM), end="")
+    try:
+        choice = input("").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return
+
+    if choice not in ("y", "yes"):
+        return
+
+    console.print()
+    result = subprocess.run(command, shell=True, text=True, capture_output=False)
+    if result.returncode != 0:
+        console.print(Text(f"  exited with code {result.returncode}", style="yellow"))
+    console.print()
