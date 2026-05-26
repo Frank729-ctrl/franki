@@ -459,7 +459,7 @@ _SLASH_COMMANDS = [
     "/pin", "/template", "/export", "/copy", "/note", "/report", "/search",
     "/cd", "/skill", "/model", "/scope", "/mitre", "/payload", "/tools",
     "/explain", "/remember", "/memories", "/forget", "/cost", "/routing",
-    "/providers", "/mcp", "/test", "/sessions", "/undo", "/diff", "/profile",
+    "/providers", "/ollama", "/mcp", "/test", "/sessions", "/undo", "/diff", "/profile",
     "/auto", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
     "/feedback", "/exit", "/quit",
 ]

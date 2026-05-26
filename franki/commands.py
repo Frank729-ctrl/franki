@@ -92,7 +92,18 @@ def handle_command(
 
     # ── Providers / MCP ───────────────────────────────────────────────────────
     if cmd == "/providers":
+        if arg == "add":
+            from franki.setup_wizard import _add_provider
+            _add_provider(cfg, is_first=False)
+            save_cfg_fn(cfg)
+            if not cfg.active_provider:
+                cfg.active_provider = cfg.first_configured_provider() or ""
+                save_cfg_fn(cfg)
+            redraw_bar_fn()
+            return True
         return _cmd_providers(cfg, save_cfg_fn, redraw_bar_fn)
+    if cmd == "/ollama":
+        return _cmd_ollama(cfg, arg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/mcp":
         return _cmd_mcp(cfg, arg, save_cfg_fn)
 
@@ -694,6 +705,102 @@ def _cmd_forget(arg: str, session: "Session") -> bool:
             console.print(Text(f"  removed fact #{item_id}.", style=GOLD))
         else:
             console.print(Text(f"  no fact with id #{item_id}.", style=TEXT_DIM))
+    return True
+
+
+# ── Ollama ───────────────────────────────────────────────────────────────────
+
+def _cmd_ollama(cfg, arg, save_cfg_fn, redraw_bar_fn) -> bool:
+    import httpx
+    base_url = "http://localhost:11434"
+    # Allow override if user configured a different Ollama URL
+    ollama_pdata = cfg.providers.get("ollama", {})
+    if ollama_pdata.get("base_url"):
+        base_url = ollama_pdata["base_url"].rstrip("/v1").rstrip("/")
+
+    try:
+        resp = httpx.get(f"{base_url}/api/tags", timeout=4)
+        resp.raise_for_status()
+        models = [m["name"] for m in resp.json().get("models", [])]
+    except Exception as e:
+        console.print(Text(f"  cannot reach Ollama at {base_url} — is it running?", style="red"))
+        console.print(Text(f"  start it with: ollama serve", style=TEXT_DIM))
+        return True
+
+    if not models:
+        console.print(Text("  Ollama is running but no models are installed.", style=TEXT_DIM))
+        console.print(Text("  install one with: ollama pull llama3", style=TEXT_DIM))
+        return True
+
+    console.print()
+    for i, name in enumerate(models, 1):
+        marker = "●" if name == ollama_pdata.get("model") else " "
+        console.print(Text(f"  {i}. {marker} {name}", style=GOLD if marker == "●" else TEXT_BODY))
+    console.print()
+
+    # If arg is a model name or number, switch directly
+    if arg:
+        target = arg
+        if arg.isdigit():
+            idx = int(arg) - 1
+            if 0 <= idx < len(models):
+                target = models[idx]
+        if target in models:
+            if "ollama" not in cfg.providers:
+                cfg.providers["ollama"] = {
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key": "ollama",
+                    "model": target,
+                    "key_required": False,
+                    "local": True,
+                    "priority": 1,
+                }
+            else:
+                cfg.providers["ollama"]["model"] = target
+            cfg.active_provider = "ollama"
+            save_cfg_fn(cfg)
+            redraw_bar_fn()
+            console.print(Text(f"  switched to ollama / {target}", style=GOLD))
+        else:
+            console.print(Text(f"  model '{arg}' not in list", style="red"))
+        return True
+
+    # Interactive pick
+    console.print(Text("  pick a model (number or name, Enter to cancel): ", style=TEXT_DIM), end="")
+    try:
+        sel = input("").strip()
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return True
+
+    if not sel:
+        return True
+
+    target = sel
+    if sel.isdigit():
+        idx = int(sel) - 1
+        if 0 <= idx < len(models):
+            target = models[idx]
+
+    if target not in models:
+        console.print(Text(f"  '{target}' not found", style="red"))
+        return True
+
+    if "ollama" not in cfg.providers:
+        cfg.providers["ollama"] = {
+            "base_url": "http://localhost:11434/v1",
+            "api_key": "ollama",
+            "model": target,
+            "key_required": False,
+            "local": True,
+            "priority": 1,
+        }
+    else:
+        cfg.providers["ollama"]["model"] = target
+    cfg.active_provider = "ollama"
+    save_cfg_fn(cfg)
+    redraw_bar_fn()
+    console.print(Text(f"  switched to ollama / {target}", style=GOLD))
     return True
 
 
@@ -1501,6 +1608,9 @@ def _cmd_help() -> bool:
         ]),
         ("Providers / MCP", [
             ("/providers",              "add, remove, or set default provider"),
+            ("/providers add",          "jump straight to adding a provider"),
+            ("/ollama",                 "list installed Ollama models and pick one"),
+            ("/ollama <model>",         "switch directly to an Ollama model"),
             ("/mcp",                    "list MCP server connections"),
             ("/mcp add",                "add an MCP server"),
             ("/mcp remove <name>",      "remove an MCP server"),
