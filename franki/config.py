@@ -245,12 +245,17 @@ def _is_legacy_config(raw: dict) -> bool:
 
 
 def needs_setup() -> bool:
-    """True when no config exists or the stored config is a legacy format."""
+    """True when no config exists, config is legacy format, or no providers are configured."""
     if not CONFIG_FILE.exists():
         return True
     try:
         raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return _is_legacy_config(raw)
+        if _is_legacy_config(raw):
+            return True
+        # No providers means setup was never completed (e.g. after a reinstall)
+        if not raw.get("providers"):
+            return True
+        return False
     except (OSError, json.JSONDecodeError):
         return True
     except Exception:
