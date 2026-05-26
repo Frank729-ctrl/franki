@@ -391,6 +391,8 @@ async def run_agent(
 
         # ── No tool calls → final response ───────────────────────────────────
         if not tool_calls:
+            if not text:
+                text = "Done."
             session.add_assistant(text)
             console.print()
             render_response(console, text, prefix="  ● ")

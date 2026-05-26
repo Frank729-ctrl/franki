@@ -515,13 +515,20 @@ def _cmd_model(
         console.print()
         return True
 
-    # Expect "provider/model" format
+    # Allow "/model groq" (no model) to just switch provider, keeping its current model
     if "/" not in arg:
-        console.print(Text(
-            f"  format: /model <provider>/<model>  (e.g. /model groq/llama-3.3-70b-versatile)\n"
-            f"  use /model to see configured providers",
-            style="red",
-        ))
+        provider_name = arg.strip()
+        if provider_name not in cfg.providers:
+            console.print(Text(
+                f"  provider '{provider_name}' not configured — add it with /providers",
+                style="red",
+            ))
+            return True
+        cfg.active_provider = provider_name
+        save_cfg_fn(cfg)
+        redraw_bar_fn()
+        model_name = cfg.providers[provider_name].get("model", "")
+        console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
         return True
 
     parts = arg.split("/", 1)

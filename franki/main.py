@@ -375,6 +375,26 @@ def _check_providers(cfg: FrankiConfig) -> None:
             style="yellow",
         ))
         console.print()
+        return
+
+    # Warn about obviously wrong key formats for known providers
+    provider_name = cfg.active_provider
+    if key and needs_key:
+        bad = False
+        if provider_name == "groq" and not key.startswith("gsk_"):
+            bad = True
+        elif provider_name == "openai" and not key.startswith("sk-"):
+            bad = True
+        elif provider_name in ("anthropic",) and not key.startswith("sk-ant-"):
+            bad = True
+        if bad:
+            console.print()
+            console.print(Text(
+                f"  warning: the API key for '{provider_name}' looks invalid — "
+                f"type /config to update it",
+                style="yellow",
+            ))
+            console.print()
 
 
 def _prompt_save_exit(session: Session, cfg: FrankiConfig) -> None:
