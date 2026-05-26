@@ -10,13 +10,9 @@ from rich.table import Table
 from rich.text import Text
 
 from franki.config import FrankiConfig, load_config, save_config
+from franki.ui.theme import GOLD, TEXT_BODY, TEXT_DIM, BORDER
 
 console = Console()
-
-GOLD      = "#d4a853"
-TEXT_BODY = "#a8a8a8"
-TEXT_DIM  = "#555555"
-BORDER    = "#2d2d2d"
 
 
 def _mask(value: str) -> str:
@@ -63,15 +59,27 @@ def _print_summary(cfg: FrankiConfig) -> None:
     t.add_column(style=TEXT_BODY)
 
     model = cfg.get_active_model()
-    t.add_row("active provider", cfg.active_provider or "(none)")
-    t.add_row("active model",    model or "(none)")
-    t.add_row("active skill",    cfg.active_skill)
-    t.add_row("auto-skill",      "on" if cfg.auto_skill else "off")
-    t.add_row("auto-accept",     "on" if cfg.auto_accept else "off")
-    t.add_row("export path",     cfg.export_path)
-    t.add_row("web search key",  _mask(cfg.tavily_api_key))
-    t.add_row("providers",       ", ".join(cfg.providers.keys()) or "(none)")
-    t.add_row("MCP servers",     ", ".join(cfg.mcp.keys()) or "(none)")
+    compact_note = ""
+    if cfg.auto_compact:
+        parts = [f"at {cfg.auto_compact_threshold:.0%}"]
+        if cfg.auto_compact_messages > 0:
+            parts.append(f"or {cfg.auto_compact_messages} msgs")
+        compact_note = "on  (" + ", ".join(parts) + ")"
+    else:
+        compact_note = "off"
+
+    t.add_row("active provider",  cfg.active_provider or "(none)")
+    t.add_row("active model",     model or "(none)")
+    t.add_row("active skill",     cfg.active_skill)
+    t.add_row("auto-skill",       "on" if cfg.auto_skill else "off")
+    t.add_row("auto-accept",      "on" if cfg.auto_accept else "off")
+    t.add_row("auto-compact",     compact_note)
+    t.add_row("routing strategy", cfg.routing_strategy)
+    t.add_row("local-first",      "on" if cfg.local_first else "off")
+    t.add_row("export path",      cfg.export_path)
+    t.add_row("web search key",   _mask(cfg.tavily_api_key))
+    t.add_row("providers",        ", ".join(cfg.providers.keys()) or "(none)")
+    t.add_row("MCP servers",      ", ".join(cfg.mcp.keys()) or "(none)")
 
     console.print(t)
     console.print()
@@ -98,9 +106,12 @@ def run_interactive_config(
             "  3  Active skill\n"
             "  4  Auto-detect skill\n"
             "  5  Auto-accept shell commands\n"
-            "  6  Export / notes path\n"
-            "  7  Web search key (Tavily)\n"
-            "  8  Edit provider key\n"
+            "  6  Auto-compact (summarise when context fills)\n"
+            "  7  Routing strategy  (capability / speed / cost / priority)\n"
+            "  8  Local-first mode  (prefer Ollama / local providers)\n"
+            "  9  Export / notes path\n"
+            "  10 Web search key (Tavily)\n"
+            "  11 Edit provider key\n"
             "  0  Done",
             style=TEXT_BODY,
         ))
@@ -181,13 +192,60 @@ def run_interactive_config(
             console.print(Text(f"  auto-accept → {'on' if cfg.auto_accept else 'off'}", style=GOLD))
 
         elif choice == "6":
+            cfg.auto_compact = _yn(
+                "Enable auto-compact (summarise history when context window fills)",
+                cfg.auto_compact,
+            )
+            _save(cfg)
+            if cfg.auto_compact:
+                raw_pct = _ask(
+                    f"Compact threshold % (e.g. 85)",
+                    str(int(cfg.auto_compact_threshold * 100)),
+                )
+                try:
+                    val = float(raw_pct.strip().rstrip("%"))
+                    val = max(50.0, min(99.0, val))
+                    cfg.auto_compact_threshold = val / 100.0
+                    _save(cfg)
+                except ValueError:
+                    pass
+            console.print(Text(
+                f"  auto-compact → {'on at ' + str(int(cfg.auto_compact_threshold * 100)) + '%' if cfg.auto_compact else 'off'}",
+                style=GOLD,
+            ))
+
+        elif choice == "7":
+            strategies = ["capability", "speed", "cost", "priority"]
+            for i, s in enumerate(strategies, 1):
+                marker = ">" if s == cfg.routing_strategy else " "
+                console.print(Text(f"  {i}. {marker} {s}", style=TEXT_BODY))
+            sel = _ask("Routing strategy", cfg.routing_strategy)
+            if sel.isdigit():
+                idx = int(sel) - 1
+                sel = strategies[idx] if 0 <= idx < len(strategies) else sel
+            if sel in strategies:
+                cfg.routing_strategy = sel
+                _save(cfg)
+                console.print(Text(f"  routing strategy → {sel}", style=GOLD))
+            else:
+                console.print(Text(f"  unknown strategy '{sel}'", style="red"))
+
+        elif choice == "8":
+            cfg.local_first = _yn(
+                "Local-first mode (boost Ollama/local providers in routing)",
+                cfg.local_first,
+            )
+            _save(cfg)
+            console.print(Text(f"  local-first → {'on' if cfg.local_first else 'off'}", style=GOLD))
+
+        elif choice == "9":
             new_path = _ask("Export / notes path", cfg.export_path)
             if new_path:
                 cfg.export_path = new_path
                 _save(cfg)
                 console.print(Text(f"  export path → {new_path}", style=GOLD))
 
-        elif choice == "7":
+        elif choice == "10":
             import getpass
             console.print(Text("  Tavily API key (hidden, Enter to clear): ", style=TEXT_DIM), end="")
             try:
@@ -199,7 +257,7 @@ def run_interactive_config(
             _save(cfg)
             console.print(Text("  web search key updated.", style=GOLD))
 
-        elif choice == "8":
+        elif choice == "11":
             import getpass
             names = list(cfg.providers.keys())
             if not names:
@@ -253,6 +311,29 @@ def run_config_cli(args: list[str]) -> None:
             cfg.auto_skill = value.lower() in ("true", "1", "yes")
         elif key == "auto_accept":
             cfg.auto_accept = value.lower() in ("true", "1", "yes")
+        elif key == "auto_compact":
+            cfg.auto_compact = value.lower() in ("true", "1", "yes")
+        elif key == "auto_compact_threshold":
+            try:
+                v = float(value.rstrip("%"))
+                cfg.auto_compact_threshold = v / 100.0 if v > 1 else v
+            except ValueError:
+                print(f"  invalid threshold '{value}'")
+                return
+        elif key == "auto_compact_messages":
+            try:
+                cfg.auto_compact_messages = int(value)
+            except ValueError:
+                print(f"  invalid message count '{value}'")
+                return
+        elif key == "local_first":
+            cfg.local_first = value.lower() in ("true", "1", "yes")
+        elif key == "routing_strategy":
+            if value in ("capability", "speed", "cost", "priority"):
+                cfg.routing_strategy = value
+            else:
+                print(f"  unknown strategy '{value}' — valid: capability, speed, cost, priority")
+                return
         elif "." in key:
             # e.g. groq.api_key  or  groq.model
             parts = key.split(".", 1)
@@ -271,7 +352,12 @@ def run_config_cli(args: list[str]) -> None:
 
     if args[0] == "get" and len(args) >= 2:
         key = args[1]
-        simple = {"active_provider", "active_skill", "export_path", "auto_skill", "auto_accept"}
+        simple = {
+            "active_provider", "active_skill", "export_path",
+            "auto_skill", "auto_accept",
+            "auto_compact", "auto_compact_threshold", "auto_compact_messages",
+            "local_first", "routing_strategy",
+        }
         if key in simple:
             print(f"  {key} = {getattr(cfg, key)}")
         elif "." in key:

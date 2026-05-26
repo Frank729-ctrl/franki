@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
@@ -7,17 +8,13 @@ from rich.table import Table
 from rich.rule import Rule
 
 from franki.skills import get_all_skill_names
+from franki.ui.theme import GOLD, TEXT_DIM, TEXT_BODY, BORDER
 
 if TYPE_CHECKING:
     from franki.config import FrankiConfig
     from franki.session import Session
 
 console = Console(highlight=False)
-
-GOLD      = "#d4a853"
-TEXT_DIM  = "#555555"
-TEXT_BODY = "#a8a8a8"
-BORDER    = "#2d2d2d"
 
 
 def handle_command(
@@ -42,6 +39,10 @@ def handle_command(
         return _cmd_history(session)
     if cmd == "/context":
         return _cmd_context(cfg, session)
+    if cmd == "/pin":
+        return _cmd_pin(session, arg)
+    if cmd == "/retry":
+        return "retry"
 
     # ── Output ────────────────────────────────────────────────────────────────
     if cmd == "/export":
@@ -56,10 +57,12 @@ def handle_command(
         return _cmd_search(cfg, session, arg)
 
     # ── Navigation ────────────────────────────────────────────────────────────
+    if cmd == "/cd":
+        return _cmd_cd(arg, cfg, session, redraw_bar_fn)
     if cmd == "/skill":
         return _cmd_skill(cfg, session, arg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/model":
-        return _cmd_model(cfg, arg, save_cfg_fn, redraw_bar_fn)
+        return _cmd_model(cfg, arg, save_cfg_fn, redraw_bar_fn, session=session)
     if cmd == "/scope":
         return _cmd_scope(session, arg, redraw_bar_fn)
 
@@ -81,19 +84,57 @@ def handle_command(
     if cmd == "/forget":
         return _cmd_forget(arg, session)
 
+    # ── Cost / routing transparency ───────────────────────────────────────────
+    if cmd == "/cost":
+        return _cmd_cost(session)
+    if cmd in ("/routing", "/route"):
+        return _cmd_routing(cfg, session)
+
     # ── Providers / MCP ───────────────────────────────────────────────────────
     if cmd == "/providers":
         return _cmd_providers(cfg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/mcp":
         return _cmd_mcp(cfg, arg, save_cfg_fn)
 
+    # ── Test runner ───────────────────────────────────────────────────────────
+    if cmd == "/test":
+        return _cmd_test(cfg, session, arg)
+
+    # ── Session management ────────────────────────────────────────────────────
+    if cmd == "/sessions":
+        return _cmd_sessions(cfg, session, arg, save_cfg_fn, redraw_bar_fn)
+
+    # ── Agent undo / diff ─────────────────────────────────────────────────────
+    if cmd == "/undo":
+        return _cmd_undo(session)
+    if cmd == "/diff":
+        return _cmd_diff(session)
+
+    # ── Config profiles ───────────────────────────────────────────────────────
+    if cmd == "/profile":
+        return _cmd_profile(cfg, arg, save_cfg_fn, redraw_bar_fn)
+
+    # ── Templates / sandbox / branching ─────────────────────────────────────
+    if cmd == "/template":
+        return _cmd_template(session, arg)
+    if cmd == "/sandbox":
+        return _cmd_sandbox(session, arg)
+    if cmd == "/branch":
+        return _cmd_branch(session, arg)
+    if cmd == "/audit":
+        return _cmd_audit()
+
     # ── System ────────────────────────────────────────────────────────────────
+    if cmd == "/auto":
+        return _cmd_auto(cfg, arg, save_cfg_fn)
     if cmd == "/init":
         return _cmd_init(cfg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/config":
         return _cmd_config_edit(cfg, save_cfg_fn, redraw_bar_fn)
     if cmd == "/help":
         return _cmd_help()
+    if cmd == "/feedback":
+        return _cmd_feedback(arg, session)
     if cmd in ("/connect", "/connect delkaai", "/connect direct"):
         # Legacy — guide user to /providers
         console.print(Text(
@@ -119,7 +160,7 @@ def _cmd_clear(session: "Session") -> bool:
 
 
 def _cmd_compact(cfg: "FrankiConfig", session: "Session") -> bool:
-    from franki.report import run_compact
+    from franki.ai_ops import run_compact
     run_compact(cfg, session)
     return True
 
@@ -130,6 +171,46 @@ def _cmd_rewind(session: "Session") -> bool:
         console.print(Text("  nothing to rewind.", style=TEXT_DIM))
     else:
         console.print(Text(f"  rewound {removed} message(s).", style=GOLD))
+    return True
+
+
+def _cmd_pin(session: "Session", arg: str) -> bool:
+    parts = arg.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+
+    if not arg.strip():
+        pins = session.list_pins()
+        if not pins:
+            console.print(Text("  no pins set.  /pin <message>  to add one.", style=TEXT_DIM))
+            return True
+        console.print()
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        t.add_column(style=TEXT_DIM, no_wrap=True, width=4)
+        t.add_column(style=TEXT_BODY)
+        for i, p in enumerate(pins, 1):
+            t.add_row(f"[{i}]", p)
+        console.print(t)
+        console.print(Text("  /pin clear [n]  to remove", style=TEXT_DIM))
+        console.print()
+        return True
+
+    if sub == "clear":
+        idx_str = parts[1].strip() if len(parts) > 1 else ""
+        if not idx_str:
+            session.clear_pins()
+            console.print(Text("  all pins cleared.", style=GOLD))
+        elif idx_str.isdigit():
+            if session.remove_pin(int(idx_str)):
+                console.print(Text(f"  pin [{idx_str}] removed.", style=GOLD))
+            else:
+                console.print(Text(f"  no pin [{idx_str}].", style=TEXT_DIM))
+        else:
+            console.print(Text("  usage: /pin clear [n]", style=TEXT_DIM))
+        return True
+
+    idx = session.add_pin(arg.strip())
+    console.print(Text(f"  pinned [{idx}]: {arg.strip()}", style=GOLD))
+    console.print(Text("  this reminder is included in every request.", style=TEXT_DIM))
     return True
 
 
@@ -174,17 +255,91 @@ def _cmd_context(cfg: "FrankiConfig", session: "Session") -> bool:
     table.add_row("Messages",         f"user: {stats['user']}  assistant: {stats['assistant']}  total: {stats['total']}")
     table.add_row("Tokens (approx)", f"~{stats['approx_tokens']:,}")
     table.add_row("", "")
+    ct = getattr(session, "change_tracker", None)
+    changes_str = f"{ct.count} file change(s) this session" if ct and ct.count else "none"
+    table.add_row("Agent changes",    changes_str)
     table.add_row("Memory",           f"{len(facts)} fact(s)" + (f"  preferred: {top_skill}" if top_skill else ""))
     if scopes:
         table.add_row("Scopes", ", ".join(scopes[:3]) + ("..." if len(scopes) > 3 else ""))
     table.add_row("", "")
     table.add_row("Search",           "available" if search else "not configured")
     table.add_row("Export path",      cfg.export_path)
-    table.add_row("Auto-accept",      "on" if cfg.auto_accept else "off")
+    auto_str = "on" if cfg.auto_accept else "off"
+    if cfg.auto_accept:
+        notify_str = "  (notify: on)" if cfg.notify_on_done else "  (notify: off)"
+        auto_str += notify_str
+    table.add_row("Auto-accept",      auto_str)
     table.add_row("MCP servers",      str(len(cfg.mcp)) or "none")
     table.add_row("Version",          f"franki v{__version__}")
 
     console.print()
+    console.print(table)
+    console.print()
+    return True
+
+
+# ── Cost / routing transparency ──────────────────────────────────────────────
+
+def _cmd_cost(session: "Session") -> bool:
+    ct = session.cost_tracker
+    if ct is None or ct.total_calls() == 0:
+        console.print(Text("  no calls recorded yet in this session.", style=TEXT_DIM))
+        return True
+
+    console.print()
+    console.print(Text("  Session cost estimate", style=f"bold {GOLD}"))
+    console.print(Rule(style=BORDER))
+    for line in ct.summary_lines():
+        console.print(Text(line, style=TEXT_BODY))
+    console.print()
+    console.print(Text(
+        "  Note: costs are estimates based on configured rates. "
+        "Set cost_per_1m_input/output per provider for accurate figures.",
+        style=TEXT_DIM,
+    ))
+    console.print()
+    return True
+
+
+def _cmd_routing(cfg: "FrankiConfig", session: "Session") -> bool:
+    from franki.routing import RoutingTracker, build_routing_order, _get_capabilities
+
+    tracker = session.routing_tracker or RoutingTracker()
+    ordered = build_routing_order(cfg, session.skill, tracker)
+
+    if not ordered:
+        console.print(Text("  no configured providers to show.", style="yellow"))
+        return True
+
+    console.print()
+    console.print(Text(
+        f"  Routing order for skill [{session.skill}]  "
+        f"(local-first: {'on' if cfg.local_first else 'off'}  "
+        f"strategy: {cfg.routing_strategy})",
+        style=f"bold {GOLD}",
+    ))
+    console.print(Rule(style=BORDER))
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style=TEXT_DIM, no_wrap=True, width=3)
+    table.add_column(style=TEXT_BODY, no_wrap=True, width=18)
+    table.add_column(style=TEXT_DIM, no_wrap=True, width=30)
+    table.add_column(style=TEXT_DIM)
+
+    for i, (name, pdata, reason) in enumerate(ordered, 1):
+        caps = _get_capabilities(name, pdata)
+        model = pdata.get("model", "")
+        cap_str = ", ".join(caps) if caps else "—"
+        rl_note = "  [rate-limited]" if tracker.is_rate_limited(name) else ""
+        avg = tracker.avg_latency(name)
+        lat_note = f"  avg {avg:.1f}s" if avg else ""
+        table.add_row(
+            str(i),
+            f"{name}/{model}"[:28],
+            reason + rl_note + lat_note,
+            f"caps: {cap_str}",
+        )
+
     console.print(table)
     console.print()
     return True
@@ -262,7 +417,7 @@ def _cmd_search(cfg: "FrankiConfig", session: "Session", query: str) -> bool:
         return True
 
     console.print()
-    console.print(Text(f"  search: {result.mode}  {len(result.results)} results", style=TEXT_DIM))
+    console.print(Text(f"  web search — {len(result.results)} results", style=TEXT_DIM))
     console.print(Rule(style=BORDER))
 
     if result.answer:
@@ -326,6 +481,7 @@ def _cmd_model(
     arg: str,
     save_cfg_fn,
     redraw_bar_fn,
+    session: "Session | None" = None,
 ) -> bool:
     if not arg:
         # Show current provider/model combos
@@ -374,6 +530,9 @@ def _cmd_model(
 
     save_cfg_fn(cfg)
     redraw_bar_fn()
+    if session is not None:
+        from franki.environment import build_environment_block
+        session.set_env_context(build_environment_block(cfg))
     console.print(Text(f"  switched to {provider_name} / {model_name}", style=GOLD))
     return True
 
@@ -392,6 +551,34 @@ def _cmd_scope(session: "Session", arg: str, redraw_bar_fn) -> bool:
     return True
 
 
+def _cmd_cd(path: str, cfg: "FrankiConfig", session: "Session", redraw_bar_fn) -> bool:
+    import os
+    from franki.project_context import load_project_context
+    from franki.custom_tools import parse_custom_tools
+    from franki.agent.tools import register_custom_tools
+    from franki.environment import build_environment_block
+    if not path:
+        console.print(Text(f"  {os.getcwd()}", style=TEXT_DIM))
+        return True
+    target = Path(path).expanduser().resolve()
+    if not target.exists():
+        console.print(Text(f"  not found: {path}", style="red"))
+        return True
+    if not target.is_dir():
+        console.print(Text(f"  not a directory: {path}", style="red"))
+        return True
+    os.chdir(target)
+    console.print(Text(f"  → {target}", style=GOLD))
+    new_ctx = load_project_context(target)
+    session.set_project_context(new_ctx)
+    register_custom_tools(parse_custom_tools(new_ctx or ""))
+    session.set_env_context(build_environment_block(cfg))
+    redraw_bar_fn()
+    if new_ctx:
+        console.print(Text("  ◦ .franki.md loaded", style=TEXT_DIM))
+    return True
+
+
 # ── Security tools ────────────────────────────────────────────────────────────
 
 def _cmd_mitre(cfg: "FrankiConfig", arg: str) -> bool:
@@ -401,19 +588,19 @@ def _cmd_mitre(cfg: "FrankiConfig", arg: str) -> bool:
 
 
 def _cmd_payload(cfg: "FrankiConfig", arg: str) -> bool:
-    from franki.report import run_payload
+    from franki.ai_ops import run_payload
     run_payload(cfg, arg)
     return True
 
 
 def _cmd_tools(cfg: "FrankiConfig", arg: str, skill: str) -> bool:
-    from franki.report import run_tools
+    from franki.ai_ops import run_tools
     run_tools(cfg, arg, skill)
     return True
 
 
 def _cmd_explain(cfg: "FrankiConfig", arg: str) -> bool:
-    from franki.report import run_explain
+    from franki.ai_ops import run_explain
     run_explain(cfg, arg)
     return True
 
@@ -718,7 +905,516 @@ def _cmd_mcp(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
     return True
 
 
+# ── Templates ─────────────────────────────────────────────────────────────────
+
+def _cmd_template(session: "Session", arg: str) -> "bool | str":
+    from franki.templates import save_template, get_template, delete_template, list_templates, valid_name
+
+    parts = arg.strip().split(maxsplit=1)
+    sub   = parts[0].lower() if parts else ""
+
+    if not arg.strip() or sub == "list":
+        templates = list_templates()
+        if not templates:
+            console.print(Text("  no templates saved.  /template save <name>  to add one.", style=TEXT_DIM))
+            return True
+        console.print()
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        t.add_column(style=GOLD, no_wrap=True, width=20)
+        t.add_column(style=TEXT_BODY)
+        for name, prompt in templates.items():
+            t.add_row(name, prompt[:70] + ("…" if len(prompt) > 70 else ""))
+        console.print(t)
+        console.print(Text("  /template run <name>  to use one", style=TEXT_DIM))
+        console.print()
+        return True
+
+    if sub == "save":
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        name_parts = rest.split(maxsplit=1)
+        if len(name_parts) < 2:
+            console.print(Text("  usage: /template save <name> <prompt text>", style=TEXT_DIM))
+            return True
+        tname, prompt = name_parts[0], name_parts[1]
+        if not valid_name(tname):
+            console.print(Text("  name must be alphanumeric/dash/underscore, max 40 chars.", style="red"))
+            return True
+        save_template(tname, prompt)
+        console.print(Text(f"  template '{tname}' saved.", style=GOLD))
+        return True
+
+    if sub == "delete":
+        tname = parts[1].strip() if len(parts) > 1 else ""
+        if not tname:
+            console.print(Text("  usage: /template delete <name>", style=TEXT_DIM))
+            return True
+        if delete_template(tname):
+            console.print(Text(f"  template '{tname}' deleted.", style=GOLD))
+        else:
+            console.print(Text(f"  template '{tname}' not found.", style="red"))
+        return True
+
+    if sub == "run":
+        tname = parts[1].strip() if len(parts) > 1 else ""
+        prompt = get_template(tname) if tname else None
+        if not prompt:
+            console.print(Text(f"  template '{tname}' not found — use /template to list.", style="red"))
+            return True
+        console.print(Text(f"  running template: {tname}", style=TEXT_DIM))
+        return f"template:{prompt}"
+
+    # Shorthand: /template <name> → run it
+    prompt = get_template(sub)
+    if prompt:
+        console.print(Text(f"  running template: {sub}", style=TEXT_DIM))
+        return f"template:{prompt}"
+
+    console.print(Text(
+        "  usage: /template  |  /template save <name> <prompt>  |  "
+        "/template run <name>  |  /template delete <name>",
+        style=TEXT_DIM,
+    ))
+    return True
+
+
+# ── Sandbox ───────────────────────────────────────────────────────────────────
+
+def _cmd_sandbox(session: "Session", arg: str) -> bool:
+    sub = arg.strip().lower()
+    if sub == "on":
+        session.sandbox = True
+        console.print(Text(
+            "  sandbox on — write_file, edit_file, apply_patch, run_command blocked.",
+            style=GOLD,
+        ))
+    elif sub == "off":
+        session.sandbox = False
+        console.print(Text("  sandbox off — all tools enabled.", style=GOLD))
+    else:
+        state = "on" if session.sandbox else "off"
+        console.print(Text(f"  sandbox: {state}  ·  /sandbox on|off", style=TEXT_DIM))
+    return True
+
+
+# ── Session branching ─────────────────────────────────────────────────────────
+
+def _cmd_branch(session: "Session", arg: str) -> bool:
+    from datetime import datetime
+    parts = arg.strip().split(maxsplit=1)
+    sub   = parts[0].lower() if parts else ""
+
+    if not arg.strip() or sub == "list":
+        branches = session.list_branches()
+        if not branches:
+            console.print(Text("  no branches saved.  /branch save [name]  to checkpoint.", style=TEXT_DIM))
+            return True
+        console.print()
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        t.add_column(style=TEXT_DIM, no_wrap=True, width=4)
+        t.add_column(style=GOLD)
+        for i, name in enumerate(branches, 1):
+            t.add_row(str(i), name)
+        console.print(t)
+        console.print(Text("  /branch restore <name>  to revert to a checkpoint", style=TEXT_DIM))
+        console.print()
+        return True
+
+    if sub == "save":
+        name = parts[1].strip() if len(parts) > 1 else datetime.now().strftime("branch-%H%M%S")
+        session.create_branch(name)
+        console.print(Text(f"  checkpoint '{name}' saved — {len(session._messages)} messages.", style=GOLD))
+        return True
+
+    if sub == "restore":
+        name = parts[1].strip() if len(parts) > 1 else ""
+        if not name:
+            console.print(Text("  usage: /branch restore <name>", style=TEXT_DIM))
+            return True
+        if session.restore_branch(name):
+            console.print(Text(f"  restored to checkpoint '{name}'.", style=GOLD))
+        else:
+            console.print(Text(f"  checkpoint '{name}' not found.", style="red"))
+        return True
+
+    if sub == "delete":
+        name = parts[1].strip() if len(parts) > 1 else ""
+        if name in session._branches:
+            del session._branches[name]
+            console.print(Text(f"  checkpoint '{name}' deleted.", style=GOLD))
+        else:
+            console.print(Text(f"  checkpoint '{name}' not found.", style="red"))
+        return True
+
+    # Shorthand: /branch <name> → save with that name
+    session.create_branch(sub)
+    console.print(Text(f"  checkpoint '{sub}' saved.", style=GOLD))
+    return True
+
+
+# ── Audit log ─────────────────────────────────────────────────────────────────
+
+def _cmd_audit() -> bool:
+    from franki.audit import tail, AUDIT_LOG
+    entries = tail(30)
+    if not entries:
+        console.print(Text(f"  no audit entries yet.  log: {AUDIT_LOG}", style=TEXT_DIM))
+        return True
+
+    console.print()
+    console.print(Text("  Recent tool executions (last 30)", style=f"bold {GOLD}"))
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_column(style=TEXT_DIM, no_wrap=True, width=10)
+    t.add_column(style=GOLD, no_wrap=True, width=18)
+    t.add_column(style=TEXT_BODY)
+    for e in entries:
+        ts    = e.get("ts", "")[-8:]  # HH:MM:SS
+        tool  = e.get("tool", "")
+        args  = e.get("args", {})
+        brief = next(iter(args.values()), "") if args else ""
+        t.add_row(ts, tool, str(brief)[:60])
+    console.print(t)
+    console.print(Text(f"\n  full log: {AUDIT_LOG}", style=TEXT_DIM))
+    console.print()
+    return True
+
+
 # ── System ────────────────────────────────────────────────────────────────────
+
+def _cmd_auto(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
+    parts = arg.lower().split()
+
+    if not parts:
+        # Show current state without changing anything
+        state   = "on" if cfg.auto_accept else "off"
+        notify  = "on" if cfg.notify_on_done else "off"
+        copy    = "on" if getattr(cfg, "auto_copy", False) else "off"
+        console.print()
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        t.add_column(style=TEXT_DIM, no_wrap=True, width=18)
+        t.add_column(style=GOLD)
+        t.add_row("Auto-accept",      state)
+        t.add_row("Notify on done",   notify)
+        t.add_row("Auto-copy",        copy)
+        console.print(t)
+        console.print(Text(
+            "  /auto on|off  ·  /auto notify on|off  ·  /auto copy on|off",
+            style=TEXT_DIM,
+        ))
+        console.print()
+        return True
+
+    if parts[0] == "on":
+        cfg.auto_accept = True
+        save_cfg_fn(cfg)
+        note = "  (notifications on)" if cfg.notify_on_done else ""
+        console.print(Text(f"  auto-accept → on{note}", style=GOLD))
+        return True
+
+    if parts[0] == "off":
+        cfg.auto_accept = False
+        save_cfg_fn(cfg)
+        console.print(Text("  auto-accept → off", style=GOLD))
+        return True
+
+    if parts[0] == "notify" and len(parts) > 1:
+        if parts[1] == "on":
+            cfg.notify_on_done = True
+            save_cfg_fn(cfg)
+            console.print(Text("  notify on done → on", style=GOLD))
+        elif parts[1] == "off":
+            cfg.notify_on_done = False
+            save_cfg_fn(cfg)
+            console.print(Text("  notify on done → off", style=GOLD))
+        else:
+            console.print(Text("  usage: /auto notify on|off", style=TEXT_DIM))
+        return True
+
+    if parts[0] == "copy" and len(parts) > 1:
+        if parts[1] == "on":
+            cfg.auto_copy = True
+            save_cfg_fn(cfg)
+            console.print(Text("  auto-copy → on  (responses copied to clipboard automatically)", style=GOLD))
+        elif parts[1] == "off":
+            cfg.auto_copy = False
+            save_cfg_fn(cfg)
+            console.print(Text("  auto-copy → off", style=GOLD))
+        else:
+            console.print(Text("  usage: /auto copy on|off", style=TEXT_DIM))
+        return True
+
+    console.print(Text(
+        "  usage: /auto  |  /auto on|off  |  /auto notify on|off  |  /auto copy on|off",
+        style=TEXT_DIM,
+    ))
+    return True
+
+
+def _cmd_test(cfg: "FrankiConfig", session: "Session", arg: str) -> bool:
+    from franki.utils.test_runner import detect_test_cmd, run_tests
+
+    cmd = arg.strip() if arg.strip() else detect_test_cmd()
+    if not cmd:
+        console.print(Text(
+            "  no test runner detected. specify one: /test <command>\n"
+            "  e.g. /test python3 -m pytest --tb=short -q",
+            style=TEXT_DIM,
+        ))
+        return True
+
+    console.print()
+    console.print(Text(f"  ◦ running  {cmd}", style=TEXT_DIM))
+    output, rc = run_tests(cmd)
+
+    status_style = GOLD if rc == 0 else "red"
+    status_word  = "passed" if rc == 0 else f"failed (exit {rc})"
+    console.print(Text(f"  tests {status_word}", style=status_style))
+    console.print()
+
+    # Show a preview
+    lines   = output.splitlines()
+    preview = "\n".join(f"  {l}" for l in lines[:40])
+    if len(lines) > 40:
+        preview += f"\n  ... ({len(lines) - 40} more lines — full output in context)"
+    console.print(Text(preview, style=TEXT_BODY))
+    console.print()
+
+    # Inject full output into the session so the AI can analyse it
+    context_msg = (
+        f"Test run: `{cmd}`  —  {status_word}\n\n"
+        f"```\n{output}\n```\n\n"
+        + ("All tests passed." if rc == 0
+           else "Please analyse these test failures and fix them.")
+    )
+    session.add_user(context_msg)
+    console.print(Text(
+        "  test output added to context — type a question or just send a message to get analysis.",
+        style=TEXT_DIM,
+    ))
+    console.print()
+    return True
+
+
+def _cmd_sessions(
+    cfg: "FrankiConfig",
+    session: "Session",
+    arg: str,
+    save_cfg_fn,
+    redraw_bar_fn,
+) -> bool:
+    from franki.session_store import list_sessions, load_session_data, delete_session, save_session
+    from franki.session import Session as Sess
+
+    parts = arg.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+
+    if not sub or sub == "list":
+        sessions = list_sessions()
+        if not sessions:
+            console.print(Text("  no saved sessions.", style=TEXT_DIM))
+            return True
+        console.print()
+        t = Table(show_header=False, box=None, padding=(0, 2))
+        t.add_column(style=TEXT_DIM, no_wrap=True, width=4)
+        t.add_column(style=GOLD, no_wrap=True, width=10)
+        t.add_column(style=TEXT_DIM, no_wrap=True, width=22)
+        t.add_column(style=TEXT_BODY)
+        for i, s in enumerate(sessions, 1):
+            date_str = s["saved_at"][:16].replace("T", " ") if s["saved_at"] else "?"
+            t.add_row(
+                str(i),
+                s["skill"],
+                f"{date_str}  ·  {s['message_count']}msg",
+                s["preview"][:50] if s["preview"] else "(no preview)",
+            )
+        console.print(t)
+        console.print(Text(
+            "\n  /sessions resume <n>  ·  /sessions delete <n>  ·  /sessions save",
+            style=TEXT_DIM,
+        ))
+        console.print()
+        return True
+
+    if sub == "save":
+        from franki.session_store import save_session as _save
+        path = _save(session, cfg)
+        if path:
+            console.print(Text(f"  session saved → {path.name}", style=GOLD))
+        else:
+            console.print(Text("  nothing to save (empty session).", style=TEXT_DIM))
+        return True
+
+    if sub == "resume":
+        idx_str = parts[1].strip() if len(parts) > 1 else ""
+        if not idx_str.isdigit():
+            console.print(Text("  usage: /sessions resume <number>", style=TEXT_DIM))
+            return True
+        data = load_session_data(int(idx_str))
+        if data is None:
+            console.print(Text(f"  session #{idx_str} not found.", style="red"))
+            return True
+
+        from franki.memory import get_context_string
+        from franki.project_context import load_project_context
+        from franki.routing import RoutingTracker
+        from franki.cost_tracker import CostTracker
+        from franki.change_tracker import ChangeTracker
+
+        mem = get_context_string()
+        proj = load_project_context()
+        restored = Sess.from_dict(data, memory_context=mem, project_context=proj)
+        restored.routing_tracker = RoutingTracker()
+        restored.cost_tracker    = CostTracker()
+        restored.change_tracker  = ChangeTracker()
+
+        # Swap current session contents in-place so the REPL keeps its references
+        session.__dict__.update(restored.__dict__)
+
+        cfg.active_skill = session.skill
+        cfg.active_provider = data.get("provider", cfg.active_provider) or cfg.active_provider
+        save_cfg_fn(cfg)
+        redraw_bar_fn()
+
+        msgs = session.history_display()
+        console.print(Text(
+            f"  resumed  [{session.skill}]  {len(msgs)} messages",
+            style=GOLD,
+        ))
+        return True
+
+    if sub == "delete":
+        idx_str = parts[1].strip() if len(parts) > 1 else ""
+        if not idx_str.isdigit():
+            console.print(Text("  usage: /sessions delete <number>", style=TEXT_DIM))
+            return True
+        if delete_session(int(idx_str)):
+            console.print(Text(f"  session #{idx_str} deleted.", style=GOLD))
+        else:
+            console.print(Text(f"  session #{idx_str} not found.", style="red"))
+        return True
+
+    console.print(Text(
+        "  usage: /sessions  |  /sessions resume <n>  |  /sessions delete <n>  |  /sessions save",
+        style=TEXT_DIM,
+    ))
+    return True
+
+
+def _cmd_undo(session: "Session") -> bool:
+    ct = getattr(session, "change_tracker", None)
+    if ct is None or ct.count == 0:
+        console.print(Text("  nothing to undo.", style=TEXT_DIM))
+        return True
+    path = ct.revert_last()
+    if path:
+        console.print(Text(f"  reverted → {path}", style=GOLD))
+        if ct.count > 0:
+            console.print(Text(f"  {ct.count} change(s) remaining  (/undo again to revert more)", style=TEXT_DIM))
+    else:
+        console.print(Text("  revert failed.", style="red"))
+    return True
+
+
+def _cmd_diff(session: "Session") -> bool:
+    from franki.utils.highlight import render_response as _render
+    ct = getattr(session, "change_tracker", None)
+    if ct is None or ct.count == 0:
+        console.print(Text("  no changes recorded in this session.", style=TEXT_DIM))
+        return True
+
+    diffs = ct.diff_summary()
+    console.print()
+    for entry in diffs:
+        action = "created" if entry["is_new_file"] else f"+{entry['lines_added']} -{entry['lines_removed']}"
+        console.print(Text(f"  {entry['path']}  [{action}]", style=f"bold {GOLD}"))
+        if entry["diff"]:
+            diff_text = "\n".join(entry["diff"][:40])
+            if len(entry["diff"]) > 40:
+                diff_text += f"\n... ({len(entry['diff']) - 40} more lines)"
+            from rich.syntax import Syntax
+            console.print(Syntax(diff_text, "diff", theme="monokai", background_color="default"))
+        console.print()
+    console.print(Text(
+        f"  {len(diffs)} file(s) changed  ·  /undo to revert the last change",
+        style=TEXT_DIM,
+    ))
+    console.print()
+    return True
+
+
+def _cmd_profile(
+    cfg: "FrankiConfig",
+    arg: str,
+    save_cfg_fn,
+    redraw_bar_fn,
+) -> bool:
+    from franki.profiles import save_profile, load_profile, list_profiles, delete_profile, _valid_name
+
+    parts = arg.strip().split(maxsplit=1)
+    sub  = parts[0].lower() if parts else ""
+    name = parts[1].strip() if len(parts) > 1 else ""
+
+    if not sub or sub == "list":
+        profiles = list_profiles()
+        console.print()
+        if not profiles:
+            console.print(Text("  no profiles saved yet.", style=TEXT_DIM))
+        else:
+            t = Table(show_header=False, box=None, padding=(0, 2))
+            t.add_column(style=GOLD, no_wrap=True)
+            for p in profiles:
+                t.add_row(p)
+            console.print(t)
+        console.print(Text(
+            "\n  /profile save <name>  ·  /profile load <name>  ·  /profile delete <name>",
+            style=TEXT_DIM,
+        ))
+        console.print()
+        return True
+
+    if sub == "save":
+        if not name:
+            console.print(Text("  usage: /profile save <name>", style=TEXT_DIM))
+            return True
+        if not _valid_name(name):
+            console.print(Text("  profile name must be 1-32 alphanumeric/dash/underscore chars.", style="red"))
+            return True
+        path = save_profile(name, cfg)
+        console.print(Text(f"  profile '{name}' saved.", style=GOLD))
+        return True
+
+    if sub == "load":
+        if not name:
+            console.print(Text("  usage: /profile load <name>", style=TEXT_DIM))
+            return True
+        loaded = load_profile(name)
+        if loaded is None:
+            console.print(Text(f"  profile '{name}' not found.", style="red"))
+            return True
+        # Apply profile fields (keep session_count)
+        count = cfg.session_count
+        cfg.__dict__.update(loaded.__dict__)
+        cfg.session_count = count
+        save_cfg_fn(cfg)
+        redraw_bar_fn()
+        console.print(Text(f"  profile '{name}' loaded.", style=GOLD))
+        return True
+
+    if sub == "delete":
+        if not name:
+            console.print(Text("  usage: /profile delete <name>", style=TEXT_DIM))
+            return True
+        if delete_profile(name):
+            console.print(Text(f"  profile '{name}' deleted.", style=GOLD))
+        else:
+            console.print(Text(f"  profile '{name}' not found.", style="red"))
+        return True
+
+    console.print(Text(
+        "  usage: /profile  |  /profile save <name>  |  /profile load <name>  |  /profile delete <name>",
+        style=TEXT_DIM,
+    ))
+    return True
+
 
 def _cmd_init(cfg: "FrankiConfig", save_cfg_fn, redraw_bar_fn) -> bool:
     from franki.setup_wizard import run_wizard
@@ -744,47 +1440,116 @@ def _cmd_help() -> bool:
 
     sections = [
         ("Conversation", [
-            ("/clear",             "clear conversation history"),
-            ("/compact",           "summarise history to save context"),
-            ("/rewind",            "undo the last exchange"),
-            ("/history",           "show conversation log for this session"),
-            ("/context",           "session dashboard: model, memory, tokens"),
+            ("/clear",                  "clear conversation history"),
+            ("/compact",                "summarise history to save context"),
+            ("/rewind",                 "undo the last exchange"),
+            ("/retry",                  "re-run the last message (fresh call)"),
+            ("/history",                "show conversation log for this session"),
+            ("/context",                "session dashboard: model, memory, tokens"),
+            ("/pin <message>",          "pin a persistent reminder into every request"),
+            ("/pin",                    "list pinned reminders"),
+            ("/pin clear [n]",          "remove one pin or all pins"),
+        ]),
+        ("Testing", [
+            ("/test",                   "run project tests and inject output into context"),
+            ("/test <command>",         "run a specific test command"),
+        ]),
+        ("Sessions", [
+            ("/sessions",               "list saved sessions"),
+            ("/sessions resume <n>",    "restore a previous session by number"),
+            ("/sessions save",          "save current session now"),
+            ("/sessions delete <n>",    "delete a saved session"),
+        ]),
+        ("Agent changes", [
+            ("/undo",                   "revert the last file change made by the agent"),
+            ("/diff",                   "show a diff of all files changed this session"),
         ]),
         ("Output", [
-            ("/export",            "save session as markdown"),
-            ("/copy",              "copy last AI response to clipboard"),
-            ("/note <text>",       "save a timestamped note"),
-            ("/report",            "generate a report from the session"),
-            ("/search <query>",    "web search — injects results into context"),
+            ("/export",                 "save session as markdown"),
+            ("/copy",                   "copy last AI response to clipboard"),
+            ("/note <text>",            "save a timestamped note"),
+            ("/report",                 "generate a report from the session"),
+            ("/search <query>",         "web search — injects results into context"),
         ]),
         ("Navigation", [
-            ("/skill [name]",      "switch skill  (coding / pentest / soc / security + custom)"),
-            ("/model [name]",      "switch model  (format: provider/model-name)"),
-            ("/scope [ip/cidr]",   "set pentest target scope"),
-            ("/scope clear",       "clear active scope"),
+            ("/cd [path]",              "change working directory  (reloads .franki.md)"),
+            ("/skill [name]",           "switch skill  (coding / pentest / soc / security + custom)"),
+            ("/model [name]",           "switch model  (format: provider/model-name)"),
+            ("/scope [ip/cidr]",        "set pentest target scope"),
+            ("/scope clear",            "clear active scope"),
+        ]),
+        ("Routing & cost", [
+            ("/routing",                "show provider ranking and routing reasons for current skill"),
+            ("/cost",                   "show token usage and estimated cost for this session"),
         ]),
         ("Security tools", [
-            ("/mitre <behaviour>", "map a behaviour to MITRE ATT&CK"),
-            ("/payload <type>",    "suggest payloads for an attack type"),
-            ("/tools <task>",      "suggest the right tools for a task"),
-            ("/explain <tool>",    "explain a tool and its usage"),
+            ("/mitre <behaviour>",      "map a behaviour to MITRE ATT&CK"),
+            ("/payload <type>",         "suggest payloads for an attack type"),
+            ("/tools <task>",           "suggest the right tools for a task"),
+            ("/explain <tool>",         "explain a tool and its usage"),
         ]),
         ("Memory", [
-            ("/remember <fact>",   "save a fact to long-term memory"),
-            ("/memories",          "list all saved memory, scopes, notes"),
-            ("/forget <id|all>",   "remove a fact by id, or clear all memory"),
+            ("/remember <fact>",        "save a fact to long-term memory"),
+            ("/memories",               "list all saved memory, scopes, notes"),
+            ("/forget <id|all>",        "remove a fact by id, or clear all memory"),
+        ]),
+        ("Profiles", [
+            ("/profile",                "list saved config profiles"),
+            ("/profile save <name>",    "snapshot current config as a named profile"),
+            ("/profile load <name>",    "restore a named profile"),
+            ("/profile delete <name>",  "delete a profile"),
         ]),
         ("Providers / MCP", [
-            ("/providers",         "add, remove, or set default provider"),
-            ("/mcp",               "list MCP server connections"),
-            ("/mcp add",           "add an MCP server"),
-            ("/mcp remove <name>", "remove an MCP server"),
+            ("/providers",              "add, remove, or set default provider"),
+            ("/mcp",                    "list MCP server connections"),
+            ("/mcp add",                "add an MCP server"),
+            ("/mcp remove <name>",      "remove an MCP server"),
+        ]),
+        ("Templates", [
+            ("/template",               "list saved prompt templates"),
+            ("/template save <n> <p>",  "save prompt p as template n"),
+            ("/template run <name>",    "run a saved template  (or just /template <name>)"),
+            ("/template delete <name>", "delete a template"),
+        ]),
+        ("Branching", [
+            ("/branch save [name]",     "checkpoint the current conversation"),
+            ("/branch restore <name>",  "revert to a saved checkpoint"),
+            ("/branch",                 "list checkpoints"),
         ]),
         ("System", [
-            ("/init",              "re-run the provider setup wizard"),
-            ("/config",            "open the interactive config editor"),
-            ("/help",              "show this command list"),
-            ("exit  or  quit",     "exit (prompts to save session)"),
+            ("/auto",                   "show auto-accept status"),
+            ("/auto on|off",            "enable or disable auto-accept mode"),
+            ("/auto notify on|off",     "toggle task-done notifications"),
+            ("/sandbox on|off",         "block all destructive tools (write, run, patch)"),
+            ("/audit",                  "show recent tool execution log"),
+            ("/init",                   "re-run the provider setup wizard"),
+            ("/config",                 "open the interactive config editor"),
+            ("/feedback <thoughts>",    "send feedback — saved locally"),
+            ("/help",                   "show this command list"),
+            ("exit  or  quit",          "exit (prompts to save session)"),
+        ]),
+        ("Input", [
+            ("Alt+Enter  (or Esc→Enter)", "insert a newline without submitting"),
+            ("Enter",                    "submit the message"),
+        ]),
+        ("Context injection  (in messages)", [
+            ("@file.py",                "inject a file into the message"),
+            ("@src/",                   "inject a directory tree + files"),
+            ("@https://...",            "fetch a URL and inject its text"),
+            ("@git",                    "inject branch, status, diff, and recent commits"),
+            ("@clipboard",              "inject current clipboard contents"),
+        ]),
+        ("Custom tools  (.franki.md)", [
+            ("```franki-tools",         "define project-specific agent tools"),
+            ("[tool_name]",             "tool section — description, command, params"),
+        ]),
+        ("One-shot CLI  (outside REPL)", [
+            ("franki fix <file>",       "analyse and fix bugs in a file"),
+            ("franki review <file>",    "code review a file"),
+            ("franki commit",           "generate a commit message from git diff"),
+            ("franki explain <file>",   "explain what a file does"),
+            ("franki resume [n]",       "resume a saved session"),
+            ("franki profile <cmd>",    "manage config profiles from the shell"),
         ]),
     ]
 
@@ -798,4 +1563,18 @@ def _cmd_help() -> bool:
         console.print(t)
         console.print()
 
+    return True
+
+
+def _cmd_feedback(arg: str, session: "Session") -> bool:
+    if not arg.strip():
+        console.print(Text(
+            "  usage: /feedback <your thoughts>  e.g. /feedback the pentest mode is great",
+            style=TEXT_DIM,
+        ))
+        return True
+    from franki.feedback import save_feedback
+    stats = session.message_stats()
+    save_feedback(arg.strip(), skill=session.skill, msgs=stats["user"])
+    console.print(Text("  thanks — noted.", style=GOLD))
     return True

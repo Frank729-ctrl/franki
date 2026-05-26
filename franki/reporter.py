@@ -15,14 +15,11 @@ from rich.rule import Rule
 from rich.text import Text
 
 from franki.config import FrankiConfig
+from franki.ui.theme import GOLD, TEXT_DIM, BORDER
 from franki.utils.ai import stream_to_terminal
 
 if TYPE_CHECKING:
     from franki.session import Session
-
-GOLD     = "#d4a853"
-TEXT_DIM = "#555555"
-BORDER   = "#2d2d2d"
 
 _PENTEST_SYS = """\
 You are a professional penetration test report writer.

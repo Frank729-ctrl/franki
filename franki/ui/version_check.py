@@ -8,7 +8,7 @@ from __future__ import annotations
 import threading
 
 
-_PYPI_URL = "https://pypi.org/pypi/franki/json"
+_PYPI_URL = "https://pypi.org/pypi/franki-cli/json"
 _TIMEOUT  = 5.0
 
 

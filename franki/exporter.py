@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 from rich.console import Console
 from rich.text import Text
 
+from franki.ui.theme import GOLD, TEXT_DIM
+
 if TYPE_CHECKING:
     from franki.config import FrankiConfig
     from franki.session import Session
 
 console = Console()
-GOLD     = "#d4a853"
-TEXT_DIM = "#555555"
 
 
 def _resolve_export_dir(cfg: "FrankiConfig") -> Path | None:

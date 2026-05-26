@@ -21,13 +21,9 @@ from franki.config import (
     save_config,
     load_config,
 )
+from franki.ui.theme import GOLD, TEXT_DIM, TEXT_BODY, BORDER
 
 console = Console()
-
-GOLD     = "#d4a853"
-TEXT_DIM = "#555555"
-TEXT_BODY = "#a8a8a8"
-BORDER   = "#2d2d2d"
 
 
 # ── Known-provider display list ───────────────────────────────────────────────
@@ -207,12 +203,21 @@ def _add_provider(cfg: FrankiConfig, is_first: bool) -> bool:
     ]
     next_priority = max(existing_priorities, default=0) + 1
 
+    preset_caps = KNOWN_PROVIDERS.get(name, {}).get("capabilities", [])
+    cost_in  = KNOWN_PROVIDERS.get(name, {}).get("cost_per_1m_input", 0.0)
+    cost_out = KNOWN_PROVIDERS.get(name, {}).get("cost_per_1m_output", 0.0)
+    is_local = KNOWN_PROVIDERS.get(name, {}).get("local", False)
+
     cfg.providers[name] = {
         "api_key": api_key,
         "base_url": base_url,
         "model": model,
         "priority": next_priority,
         "key_required": key_required,
+        "capabilities": preset_caps,
+        "cost_per_1m_input": cost_in,
+        "cost_per_1m_output": cost_out,
+        "local": is_local,
     }
 
     console.print(Text(f"  added: {name} / {model}", style=GOLD))

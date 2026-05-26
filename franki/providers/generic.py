@@ -95,20 +95,25 @@ async def stream_chat(
                         raise ProviderRateLimitError(friendly)
                     raise ProviderError(friendly)
 
+                finish_reason: str | None = None
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
                     data = line[6:]
                     if data.strip() == "[DONE]":
-                        return
+                        break
                     try:
                         chunk = json.loads(data)
-                        delta = chunk["choices"][0]["delta"]
-                        content = delta.get("content", "")
+                        choice = chunk["choices"][0]
+                        finish_reason = choice.get("finish_reason") or finish_reason
+                        content = (choice.get("delta") or {}).get("content", "")
                         if content:
                             yield content
-                    except (KeyError, json.JSONDecodeError):
+                    except (KeyError, IndexError, json.JSONDecodeError):
                         continue
+
+                if finish_reason == "length":
+                    yield "\n\n*(response truncated — context limit reached)*"
 
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise ProviderError(
@@ -118,6 +123,162 @@ async def stream_chat(
         raise ProviderError(
             f"{provider_name}: response timed out — the model may be slow, try again"
         )
+
+
+async def chat_with_tools(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    base_url: str,
+    tools: list[dict],
+    provider_name: str = "provider",
+    temperature: float = 0.7,
+) -> dict:
+    """
+    Non-streaming call with tool/function-calling support.
+    Returns the full assistant message dict, which may contain:
+      - 'content': text  (finish_reason == 'stop')
+      - 'tool_calls': [...]  (finish_reason == 'tool_calls')
+    """
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "stream": False,
+        "temperature": temperature,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 400:
+                friendly = _parse_friendly_error(
+                    resp.status_code, resp.text, provider_name, model
+                )
+                if resp.status_code == 429 or any(
+                    s in resp.text.lower() for s in RATE_LIMIT_SIGNALS
+                ):
+                    raise ProviderRateLimitError(friendly)
+                raise ProviderError(friendly)
+            data = resp.json()
+            return data["choices"][0]["message"]
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise ProviderError(
+            f"{provider_name}: connection failed — check your network or the provider URL"
+        ) from exc
+    except httpx.ReadTimeout:
+        raise ProviderError(
+            f"{provider_name}: response timed out"
+        )
+
+
+async def stream_chat_with_tools(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    base_url: str,
+    tools: list[dict],
+    provider_name: str = "provider",
+    temperature: float = 0.7,
+):
+    """
+    Streaming tool-capable chat call.
+
+    Yields ``("text", chunk)`` for each content delta as it arrives, then a
+    single ``("done", json_str)`` where *json_str* is the assembled tool_calls
+    list (JSON array string).  Yields ``("done", "[]")`` for a plain-text
+    response with no tool calls.
+
+    Use instead of ``chat_with_tools`` when you want live token feedback.
+    """
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model":        model,
+        "messages":     messages,
+        "tools":        tools,
+        "tool_choice":  "auto",
+        "stream":       True,
+        "temperature":  temperature,
+    }
+
+    tool_calls_acc: dict[int, dict] = {}
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    text = body.decode()
+                    friendly = _parse_friendly_error(
+                        resp.status_code, text, provider_name, model
+                    )
+                    if resp.status_code == 429 or any(
+                        s in text.lower() for s in RATE_LIMIT_SIGNALS
+                    ):
+                        raise ProviderRateLimitError(friendly)
+                    raise ProviderError(friendly)
+
+                finish_reason: str | None = None
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    raw = line[6:]
+                    if raw.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk  = json.loads(raw)
+                        choice = chunk["choices"][0]
+                        delta  = choice.get("delta", {})
+                        finish_reason = choice.get("finish_reason") or finish_reason
+
+                        content = delta.get("content") or ""
+                        if content:
+                            yield ("text", content)
+
+                        for tc in delta.get("tool_calls") or []:
+                            idx = tc.get("index", 0)
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {
+                                    "id":       tc.get("id", ""),
+                                    "type":     "function",
+                                    "function": {
+                                        "name":      (tc.get("function") or {}).get("name", ""),
+                                        "arguments": "",
+                                    },
+                                }
+                            else:
+                                if tc.get("id"):
+                                    tool_calls_acc[idx]["id"] = tc["id"]
+                                fn = tc.get("function") or {}
+                                if fn.get("name"):
+                                    tool_calls_acc[idx]["function"]["name"] += fn["name"]
+                                if fn.get("arguments"):
+                                    tool_calls_acc[idx]["function"]["arguments"] += fn["arguments"]
+
+                    except (KeyError, IndexError, json.JSONDecodeError):
+                        continue
+
+                if finish_reason == "length" and not tool_calls_acc:
+                    yield ("text", "\n\n*(response truncated — context limit reached)*")
+
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        raise ProviderError(
+            f"{provider_name}: connection failed — check your network or the provider URL"
+        ) from exc
+    except httpx.ReadTimeout:
+        raise ProviderError(f"{provider_name}: response timed out")
+
+    tool_calls = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+    yield ("done", json.dumps(tool_calls))
 
 
 async def chat_once(

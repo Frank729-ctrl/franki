@@ -32,11 +32,8 @@ def token_usage_pct(approx_tokens: int, model_name: str) -> float:
 
 
 def warning_text(approx_tokens: int, model_name: str) -> str | None:
-    """
-    Return a warning string if usage exceeds the threshold, else None.
-    e.g. "⚠ context 82% full — /compact to reduce"
-    """
+    """Return a warning string if usage exceeds the threshold, else None."""
     pct = token_usage_pct(approx_tokens, model_name)
     if pct >= _WARN_THRESHOLD:
-        return f"⚠ context {pct:.0%} full — /compact to reduce"
+        return f"context {pct:.0%} full — /compact to reduce"
     return None

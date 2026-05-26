@@ -5,11 +5,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from franki.config import FrankiConfig
+from franki.ui.theme import GOLD, TEXT_BODY, TEXT_DIM
 from franki.utils.ai import ask_ai
-
-GOLD      = "#d4a853"
-TEXT_BODY = "#a8a8a8"
-TEXT_DIM  = "#555555"
 
 _SYSTEM = """\
 You are a MITRE ATT&CK framework expert. Map the described behaviour to ATT&CK.
