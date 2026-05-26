@@ -16,7 +16,7 @@ from prompt_toolkit.styles import Style as PTStyle
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.completion import WordCompleter, merge_completers
+from prompt_toolkit.completion import Completer, Completion
 
 from franki import __version__
 from franki.config import load_config, save_config, CONFIG_FILE, FrankiConfig, needs_setup
@@ -486,7 +486,14 @@ def _get_pt_session() -> PromptSession:
         """Plain Enter submits the prompt."""
         event.current_buffer.validate_and_handle()
 
-    completer = WordCompleter(_SLASH_COMMANDS, sentence=True, match_middle=False)
+    class _SlashCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            line = document.text_before_cursor.split("\n")[-1]
+            if not line.startswith("/"):
+                return
+            for cmd in _SLASH_COMMANDS:
+                if cmd.startswith(line):
+                    yield Completion(cmd, start_position=-len(line))
 
     _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     history = FileHistory(str(_HISTORY_FILE))
@@ -495,8 +502,8 @@ def _get_pt_session() -> PromptSession:
         style=style,
         key_bindings=kb,
         multiline=True,
-        completer=completer,
-        complete_while_typing=False,
+        completer=_SlashCompleter(),
+        complete_while_typing=True,
         history=history,
     )
 
