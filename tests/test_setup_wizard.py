@@ -55,7 +55,7 @@ class TestValidateKey:
             side_effect=ProviderRateLimitError("rate limit"),
         ):
             ok, err = asyncio.run(_validate_key("key", "url", "model"))
-        assert ok is False
+        assert ok is None  # rate limit = key likely valid
 
     def test_generic_exception_returns_false(self):
         from franki.setup_wizard import _validate_key

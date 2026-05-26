@@ -43,7 +43,9 @@ _PRESET_DISPLAY = [
 # ── Key validation ────────────────────────────────────────────────────────────
 
 async def _validate_key(api_key: str, base_url: str, model: str) -> tuple[bool, str]:
-    """Make a minimal test call. Returns (ok, error_message)."""
+    """Make a minimal test call. Returns (ok, error_message).
+    ok=True means success. ok=None means rate-limited (key likely valid). ok=False means real error.
+    """
     from franki.providers.generic import chat_once, ProviderError, ProviderRateLimitError
     try:
         await chat_once(
@@ -54,7 +56,9 @@ async def _validate_key(api_key: str, base_url: str, model: str) -> tuple[bool, 
             provider_name="test",
         )
         return True, ""
-    except (ProviderError, ProviderRateLimitError) as exc:
+    except ProviderRateLimitError:
+        return None, "rate limited"
+    except ProviderError as exc:
         return False, str(exc)
     except Exception as exc:
         msg = str(exc)
@@ -200,8 +204,10 @@ def _add_provider(cfg: FrankiConfig, is_first: bool) -> bool:
     # ── Validate ──────────────────────────────────────────────────────────────
     console.print(Text("  validating...", style=TEXT_DIM), end="\r")
     ok, err = asyncio.run(_validate_key(api_key, base_url, model))
-    if ok:
+    if ok is True:
         console.print(Text("  ok — provider works                ", style=GOLD))
+    elif ok is None:
+        console.print(Text("  key looks valid (rate limited — will work fine)  ", style=GOLD))
     else:
         console.print(Text(f"  validation failed: {err}", style="red"))
         try:
