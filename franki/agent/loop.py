@@ -18,6 +18,7 @@ from franki.agent.tools import (
     get_all_tool_schemas, NEEDS_CONFIRM, execute_tool,
     WRITE_TOOLS, READ_ONLY_TOOLS, _CUSTOM_TOOLS,
 )
+from franki.hooks import run_pre_tool, run_post_tool
 from franki.audit import log_tool
 from franki.cost_tracker import CostTracker
 import sys
@@ -79,6 +80,7 @@ async def _call_with_tools(
     tracker: "RoutingTracker | None" = None,
     console: "Console | None" = None,
     cost_tracker: "CostTracker | None" = None,
+    thinking_budget: int = 0,
 ) -> dict:
     """
     Route through providers using streaming tool calls.
@@ -104,6 +106,7 @@ async def _call_with_tools(
                     api_key, model, messages, base_url, name, console,
                     cost_tracker=cost_tracker,
                     pdata=pdata if isinstance(pdata, dict) else {},
+                    thinking_budget=thinking_budget,
                 )
             except ProviderRateLimitError as exc:
                 last_err = exc
@@ -127,6 +130,7 @@ async def _stream_and_assemble(
     console: "Console | None",
     cost_tracker: "CostTracker | None" = None,
     pdata: dict | None = None,
+    thinking_budget: int = 0,
 ) -> dict:
     """Stream a tool-capable call, show spinner, return assembled message dict."""
     text_parts: list[str] = []
@@ -142,6 +146,7 @@ async def _stream_and_assemble(
         async for event_type, value in _stream_fn(
             api_key, model, messages, base_url, get_all_tool_schemas(),
             provider_name=provider_name,
+            thinking_budget=thinking_budget,
         ):
             if event_type == "text":
                 text_parts.append(value)
@@ -414,9 +419,17 @@ async def run_agent(
     """
     session.add_user(message)
     files_written: list[str] = []
+<<<<<<< HEAD
     auto_accept    = getattr(cfg, "auto_accept", False)
     tool_permissions = getattr(cfg, "tool_permissions", {}) or {}
     notify_on_done = getattr(cfg, "notify_on_done", True)
+=======
+    auto_accept      = getattr(cfg, "auto_accept", False)
+    tool_permissions = getattr(cfg, "tool_permissions", {}) or {}
+    hooks            = getattr(cfg, "hooks", {}) or {}
+    thinking_budget  = int(getattr(cfg, "thinking_budget", 0) or 0)
+    notify_on_done   = getattr(cfg, "notify_on_done", True)
+>>>>>>> 6d328d19bdc04b514c9b57d089213f4a73ac7c46
     sandbox        = getattr(session, "sandbox", False)
     _tracker       = getattr(session, "routing_tracker", None)
     _ct            = getattr(session, "change_tracker", None)
@@ -436,6 +449,7 @@ async def run_agent(
             ),
             session.skill, _tracker, console,
             cost_tracker=_cost,
+            thinking_budget=thinking_budget,
         )
 
         tool_calls = msg.get("tool_calls") or []
@@ -596,8 +610,16 @@ async def run_agent(
                 path = fn_args.get("path", "")
                 _before = _read_snapshot(path)
 
+            pre_out = run_pre_tool(hooks, fn_name, fn_args)
+            if pre_out:
+                console.print(Text(f"  [hook] {pre_out}", style=TEXT_DIM))
+
             result = execute_tool(fn_name, fn_args)
             log_tool(fn_name, fn_args, result)
+
+            post_out = run_post_tool(hooks, fn_name, result)
+            if post_out:
+                console.print(Text(f"  [hook] {post_out}", style=TEXT_DIM))
 
             if fn_name in WRITE_TOOLS:
                 path = fn_args.get("path", "")

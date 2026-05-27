@@ -206,6 +206,7 @@ async def stream_chat_with_tools(
     tools: list[dict],
     provider_name: str = "provider",
     temperature: float = 0.7,
+    thinking_budget: int = 0,  # accepted for API compatibility; not used by generic providers
 ):
     """
     Streaming tool-capable chat call.

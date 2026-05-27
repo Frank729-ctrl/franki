@@ -181,6 +181,14 @@ class FrankiConfig(BaseModel):
     max_history_turns: int = 0
     # per-tool overrides: tool_name → "always" | "ask" | "never"
     tool_permissions: dict[str, str] = {}
+<<<<<<< HEAD
+=======
+    # shell hooks: event → shell command; events: pre_tool, post_tool,
+    # pre_tool.<name>, post_tool.<name>, pre_session, post_session
+    hooks: dict[str, str] = {}
+    # extended thinking budget in tokens (0 = off); Anthropic only for now
+    thinking_budget: int = 0
+>>>>>>> 6d328d19bdc04b514c9b57d089213f4a73ac7c46
 
     # Routing
     local_first: bool = False                 # prefer local providers (Ollama, LM Studio)

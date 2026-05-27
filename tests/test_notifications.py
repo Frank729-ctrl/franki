@@ -274,7 +274,7 @@ class TestAgentLoopNotification:
 
         call_count = 0
 
-        async def _fake(cfg, msgs, skill, tracker=None, console=None, cost_tracker=None):
+        async def _fake(cfg, msgs, skill, tracker=None, console=None, cost_tracker=None, thinking_budget=0):
             nonlocal call_count
             call_count += 1
             return tool_response if call_count == 1 else final_response
@@ -300,7 +300,7 @@ class TestAgentLoopNotification:
 
         final_response = {"content": "Done.", "tool_calls": []}
 
-        async def _fake(cfg, msgs, skill, tracker=None, console=None, cost_tracker=None):
+        async def _fake(cfg, msgs, skill, tracker=None, console=None, cost_tracker=None, thinking_budget=0):
             return final_response
 
         with patch("franki.agent.loop._call_with_tools", side_effect=_fake):
@@ -330,7 +330,7 @@ class TestAgentLoopNotification:
 
         call_count = 0
 
-        async def _fake(cfg, msgs, skill, tracker=None, console=None, cost_tracker=None):
+        async def _fake(cfg, msgs, skill, tracker=None, console=None, cost_tracker=None, thinking_budget=0):
             nonlocal call_count
             call_count += 1
             return tool_response if call_count == 1 else final_response

@@ -132,6 +132,13 @@ def handle_command(
         return _cmd_toolperms(cfg, arg, save_cfg_fn)
     if cmd == "/autocommit":
         return _cmd_autocommit(cfg, arg, save_cfg_fn)
+<<<<<<< HEAD
+=======
+    if cmd == "/hooks":
+        return _cmd_hooks(cfg, arg, save_cfg_fn)
+    if cmd == "/think":
+        return _cmd_think(cfg, arg, save_cfg_fn)
+>>>>>>> 6d328d19bdc04b514c9b57d089213f4a73ac7c46
     if cmd == "/auto":
         return _cmd_auto(cfg, arg, save_cfg_fn)
     if cmd == "/init":
@@ -1798,6 +1805,12 @@ def _cmd_help() -> bool:
             ("/autocommit on|off",      "auto git-commit after each agent file edit"),
             ("/toolperms list",              "show per-tool permission overrides"),
             ("/toolperms allow|block <tool>","set a tool to always-allow or always-block"),
+<<<<<<< HEAD
+=======
+            ("/hooks list",                  "show configured pre/post tool hooks"),
+            ("/hooks set <event> <cmd>",     "run a shell command before/after a tool"),
+            ("/think on|off|<N>",            "enable extended thinking with token budget"),
+>>>>>>> 6d328d19bdc04b514c9b57d089213f4a73ac7c46
             ("/sandbox on|off",         "block all destructive tools (write, run, patch)"),
             ("/audit",                  "show recent tool execution log"),
             ("/init",                   "re-run the provider setup wizard"),
@@ -1855,4 +1868,120 @@ def _cmd_feedback(arg: str, session: "Session") -> bool:
     stats = session.message_stats()
     save_feedback(arg.strip(), skill=session.skill, msgs=stats["user"])
     console.print(Text("  thanks — noted.", style=GOLD))
+    return True
+
+
+def _cmd_hooks(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
+    """Manage pre/post tool hooks.
+
+    /hooks               — list configured hooks
+    /hooks set <event> <cmd>  — set a hook command
+    /hooks unset <event>      — remove a hook
+    /hooks clear         — remove all hooks
+
+    Events: pre_tool, post_tool, pre_tool.<name>, post_tool.<name>,
+            pre_session, post_session
+    """
+    parts = arg.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else "list"
+
+    if sub in ("list", ""):
+        console.print()
+        if not cfg.hooks:
+            console.print(Text("  no hooks configured", style=TEXT_DIM))
+            console.print(Text(
+                "  /hooks set <event> <command>  e.g.  /hooks set post_tool.write_file black {FRANKI_TOOL}",
+                style=TEXT_DIM,
+            ))
+        else:
+            t = Table(show_header=False, box=None, padding=(0, 2))
+            t.add_column(style=GOLD, no_wrap=True, width=28)
+            t.add_column(style=TEXT_BODY)
+            for event, cmd in cfg.hooks.items():
+                t.add_row(event, cmd)
+            console.print(t)
+        console.print()
+        return True
+
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if sub == "set":
+        kv = rest.split(maxsplit=1)
+        if len(kv) < 2:
+            console.print(Text("  usage: /hooks set <event> <shell command>", style=TEXT_DIM))
+            return True
+        event, cmd = kv[0], kv[1]
+        cfg.hooks[event] = cmd
+        save_cfg_fn(cfg)
+        console.print(Text(f"  hook set: {event} → {cmd}", style=GOLD))
+        return True
+
+    if sub == "unset":
+        event = rest.strip()
+        if not event:
+            console.print(Text("  usage: /hooks unset <event>", style=TEXT_DIM))
+            return True
+        removed = cfg.hooks.pop(event, None)
+        if removed:
+            save_cfg_fn(cfg)
+            console.print(Text(f"  hook removed: {event}", style=GOLD))
+        else:
+            console.print(Text(f"  no hook named '{event}'", style=TEXT_DIM))
+        return True
+
+    if sub == "clear":
+        cfg.hooks.clear()
+        save_cfg_fn(cfg)
+        console.print(Text("  all hooks cleared", style=GOLD))
+        return True
+
+    console.print(Text("  usage: /hooks list | set <event> <cmd> | unset <event> | clear", style=TEXT_DIM))
+    return True
+
+
+def _cmd_think(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
+    """Toggle extended thinking.
+
+    /think          — show current status
+    /think on       — enable with default budget (8000 tokens)
+    /think <N>      — enable with N token budget
+    /think off      — disable extended thinking
+    """
+    DEFAULT_BUDGET = 8000
+    part = arg.strip().lower()
+
+    if not part or part == "status":
+        budget = getattr(cfg, "thinking_budget", 0) or 0
+        state = f"on  (budget: {budget:,} tokens)" if budget > 0 else "off"
+        console.print()
+        console.print(Text(f"  extended thinking: {state}", style=GOLD))
+        console.print(Text(
+            "  /think on | /think <N> | /think off",
+            style=TEXT_DIM,
+        ))
+        console.print()
+        return True
+
+    if part == "off":
+        cfg.thinking_budget = 0
+        save_cfg_fn(cfg)
+        console.print(Text("  extended thinking → off", style=GOLD))
+        return True
+
+    if part == "on":
+        cfg.thinking_budget = DEFAULT_BUDGET
+        save_cfg_fn(cfg)
+        console.print(Text(f"  extended thinking → on  ({DEFAULT_BUDGET:,} token budget)", style=GOLD))
+        return True
+
+    try:
+        budget = int(part)
+        if budget < 1024:
+            console.print(Text("  minimum budget is 1024 tokens", style="yellow"))
+            return True
+        cfg.thinking_budget = budget
+        save_cfg_fn(cfg)
+        console.print(Text(f"  extended thinking → on  ({budget:,} token budget)", style=GOLD))
+    except ValueError:
+        console.print(Text("  usage: /think on | off | <token_budget>", style=TEXT_DIM))
     return True

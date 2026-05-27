@@ -518,7 +518,11 @@ _SLASH_COMMANDS = [
     "/cd", "/skill", "/model", "/scope", "/mitre", "/payload", "/tools",
     "/explain", "/remember", "/memories", "/forget", "/cost", "/routing",
     "/providers", "/ollama", "/mcp", "/test", "/sessions", "/undo", "/diff", "/profile",
+<<<<<<< HEAD
     "/auto", "/autocommit", "/toolperms", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
+=======
+    "/auto", "/autocommit", "/toolperms", "/hooks", "/think", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
+>>>>>>> 6d328d19bdc04b514c9b57d089213f4a73ac7c46
     "/feedback", "/exit", "/quit",
 ]
 
@@ -573,6 +577,10 @@ _EXIT_WORDS = {"exit", "quit", "q", "/exit", "/quit", "/q"}
 
 def _end_session(session: Session, cfg: FrankiConfig) -> None:
     """Save prompt + optional periodic feedback prompt."""
+    from franki.hooks import run_session_hook
+    _post_out = run_session_hook(cfg.hooks, "post_session")
+    if _post_out:
+        console.print(Text(f"  [hook:post_session] {_post_out[:200]}", style=TEXT_DIM))
     _prompt_save_exit(session, cfg)
     from franki.feedback import should_ask, ask_feedback
     stats = session.message_stats()
@@ -689,6 +697,13 @@ def _run_repl(cfg: FrankiConfig, resume_data: dict | None = None, piped_input: s
     # Inject full self-awareness block into system prompt
     from franki.environment import build_environment_block
     session.set_env_context(build_environment_block(cfg))
+
+    # Run pre_session hook; inject output as extra context so the model can see it
+    from franki.hooks import run_session_hook
+    _pre_out = run_session_hook(cfg.hooks, "pre_session")
+    if _pre_out:
+        console.print(Text(f"  [hook:pre_session] {_pre_out[:200]}", style=TEXT_DIM))
+        session.set_env_context(build_environment_block(cfg) + f"\n[pre_session hook output]\n{_pre_out}")
 
     _render_splash(cfg, project_context=project_context)
     if resume_data is not None:
