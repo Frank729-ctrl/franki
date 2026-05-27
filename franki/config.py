@@ -172,6 +172,7 @@ class FrankiConfig(BaseModel):
     auto_compact: bool = True
     auto_compact_threshold: float = 0.85      # fraction of context window
     auto_compact_messages: int = 0            # 0 = disabled; N = compact after N user messages
+    auto_commit: bool = False
 
     # Routing
     local_first: bool = False                 # prefer local providers (Ollama, LM Studio)

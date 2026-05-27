@@ -128,6 +128,8 @@ def handle_command(
         return _cmd_audit()
 
     # ── System ────────────────────────────────────────────────────────────────
+    if cmd == "/autocommit":
+        return _cmd_autocommit(cfg, arg, save_cfg_fn)
     if cmd == "/auto":
         return _cmd_auto(cfg, arg, save_cfg_fn)
     if cmd == "/init":
@@ -1169,6 +1171,29 @@ def _cmd_template(session: "Session", arg: str) -> "bool | str":
 
 # ── Sandbox ───────────────────────────────────────────────────────────────────
 
+def _cmd_autocommit(cfg: "FrankiConfig", arg: str, save_cfg_fn) -> bool:
+    """Toggle auto-commit after each agent turn that writes files."""
+    arg = arg.strip().lower()
+    if arg == "on":
+        cfg.auto_commit = True
+        save_cfg_fn(cfg)
+        console.print(Text(
+            "  auto-commit on — git commits will be created after each agent file edit",
+            style=GOLD,
+        ))
+    elif arg == "off":
+        cfg.auto_commit = False
+        save_cfg_fn(cfg)
+        console.print(Text("  auto-commit off.", style=TEXT_DIM))
+    else:
+        state = "on" if getattr(cfg, "auto_commit", False) else "off"
+        console.print(Text(
+            f"  auto-commit: {state}  ·  /autocommit on|off",
+            style=TEXT_DIM,
+        ))
+    return True
+
+
 def _cmd_sandbox(session: "Session", arg: str) -> bool:
     sub = arg.strip().lower()
     if sub == "on":
@@ -1713,6 +1738,7 @@ def _cmd_help() -> bool:
             ("/auto",                   "show auto-accept status"),
             ("/auto on|off",            "enable or disable auto-accept mode"),
             ("/auto notify on|off",     "toggle task-done notifications"),
+            ("/autocommit on|off",      "auto git-commit after each agent file edit"),
             ("/sandbox on|off",         "block all destructive tools (write, run, patch)"),
             ("/audit",                  "show recent tool execution log"),
             ("/init",                   "re-run the provider setup wizard"),

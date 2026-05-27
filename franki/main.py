@@ -126,6 +126,27 @@ def _count_tokens_approx(text: str) -> int:
     return max(1, int(cjk + code_ascii / 3 + other_unicode / 2.5 + plain / 4))
 
 
+def _git_branch() -> str | None:
+    """Return current git branch name, or None if not in a repo or detached HEAD."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        branch = r.stdout.strip()
+        return branch if branch and branch != "HEAD" else None
+    except Exception:
+        return None
+
+
+def _context_gauge(pct: float) -> str:
+    """Return a compact ASCII gauge like [████░░░░ 42%]."""
+    filled = int(round(pct * 8))
+    bar = "█" * filled + "░" * (8 - filled)
+    return f"[{bar} {pct:.0%}]"
+
+
 async def _stream_response(
     cfg: FrankiConfig,
     session: Session,
@@ -492,7 +513,7 @@ _SLASH_COMMANDS = [
     "/cd", "/skill", "/model", "/scope", "/mitre", "/payload", "/tools",
     "/explain", "/remember", "/memories", "/forget", "/cost", "/routing",
     "/providers", "/ollama", "/mcp", "/test", "/sessions", "/undo", "/diff", "/profile",
-    "/auto", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
+    "/auto", "/autocommit", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
     "/feedback", "/exit", "/quit",
 ]
 
@@ -572,7 +593,50 @@ def _load_dotenv() -> None:
         pass
 
 
-def _run_repl(cfg: FrankiConfig, resume_data: dict | None = None) -> None:
+def _maybe_auto_commit(cfg: "FrankiConfig", change_tracker: "ChangeTracker") -> None:
+    """Stage changed files and create a git commit with an AI-generated message."""
+    import subprocess
+    from franki.utils.ai import ask_ai
+
+    paths = change_tracker.changed_paths
+    if not paths:
+        return
+
+    # Stage only the files the agent touched
+    try:
+        subprocess.run(["git", "add", "--"] + paths, capture_output=True, timeout=10)
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--stat"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        return
+
+    if not staged:
+        return
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Generate a concise git commit message (one line, ≤72 chars) "
+                "for the following staged changes. Return ONLY the message text."
+            ),
+        },
+        {"role": "user", "content": staged},
+    ]
+    try:
+        commit_msg = ask_ai(cfg, messages).strip().strip('"').strip("'")
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            capture_output=True, timeout=15,
+        )
+        console.print(Text(f"  ✓ auto-committed: {commit_msg[:70]}", style=GOLD))
+    except Exception as exc:
+        console.print(Text(f"  auto-commit failed: {exc}", style=TEXT_DIM))
+
+
+def _run_repl(cfg: FrankiConfig, resume_data: dict | None = None, piped_input: str | None = None) -> None:
     from franki.memory import get_context_string
 
     _load_dotenv()
@@ -643,9 +707,11 @@ def _run_repl(cfg: FrankiConfig, resume_data: dict | None = None) -> None:
         label = (f"{cfg.active_provider}/{model}" if model
                  else cfg.active_provider or "no provider")
         scope_part = f"  ·  scope:{session.scope}" if session.scope else ""
+        branch = _git_branch()
+        branch_part = f"  ·  git:({branch})" if branch else ""
         t = Text()
         t.append("  ● ", style=GOLD)
-        t.append(f"[{cfg.active_skill}]{scope_part}  ·  {label}", style=TEXT_DIM)
+        t.append(f"[{cfg.active_skill}]{scope_part}  ·  {label}{branch_part}", style=TEXT_DIM)
         console.print(t)
 
     _check_providers(cfg)
@@ -653,18 +719,35 @@ def _run_repl(cfg: FrankiConfig, resume_data: dict | None = None) -> None:
     pt = _get_pt_session()
 
     def _toolbar() -> HTML:
+        from franki.ui.token_warning import token_usage_pct
         model = cfg.get_active_model()
         model_short = model[:26] + ".." if len(model) > 28 else model
         label = f"{cfg.active_provider}/{model_short}" if model_short else cfg.active_provider or "no provider"
         scope_part = f"  ·  scope:{session.scope}" if session.scope else ""
+        branch = _git_branch()
+        branch_part = f"  git:({branch})" if branch else ""
         stats = session.message_stats()
+        pct = token_usage_pct(stats["approx_tokens"], cfg.get_active_model())
+        gauge = _context_gauge(pct)
         warn = warning_text(stats["approx_tokens"], cfg.get_active_model())
-        hint = f"  ·  ⚠ {warn}" if warn else "  ·  /help for commands"
+        hint = f"  ⚠ {warn}" if warn else "  /help"
         return HTML(
             f'<style fg="{TEXT_DIM}" bg="#0d0d0d">'
-            f"  [{cfg.active_skill}]{scope_part}  ·  {label}{hint}"
+            f"  [{cfg.active_skill}]{scope_part}  ·  {label}  {branch_part}  ctx:{gauge}{hint}"
             "</style>"
         )
+
+    # If stdin was piped, inject it as the first message then continue in REPL
+    if piped_input:
+        console.print(Text(f"  (piped input: {piped_input[:60]}{'...' if len(piped_input)>60 else ''})", style=TEXT_DIM))
+        try:
+            _loop.run_until_complete(run_agent(cfg, session, console, piped_input))
+            if getattr(cfg, "auto_commit", False) and change_tracker.count > 0:
+                _maybe_auto_commit(cfg, change_tracker)
+            if not _maybe_auto_compact(cfg, session):
+                _maybe_warn_tokens(session, cfg)
+        except Exception as exc:
+            console.print(Text(f"  error: {exc}", style="red"))
 
     while True:
         try:
@@ -776,6 +859,8 @@ def _run_repl(cfg: FrankiConfig, resume_data: dict | None = None) -> None:
             response = _loop.run_until_complete(
                 run_agent(cfg, session, console, content)
             )
+            if getattr(cfg, "auto_commit", False) and change_tracker.count > 0:
+                _maybe_auto_commit(cfg, change_tracker)
             if not _maybe_auto_compact(cfg, session):
                 _maybe_warn_tokens(session, cfg)
         except RuntimeError as exc:
@@ -905,6 +990,18 @@ def main() -> None:
         print(f"franki {__version__}")
         return
 
+    # --yes / -y: auto-accept all tool confirmations (applied after load_config)
+    _auto_yes = "--yes" in args or "-y" in args
+    args = [a for a in args if a not in ("--yes", "-y")]
+
+    # Piped stdin: cat file.py | franki "explain this"
+    _piped: str | None = None
+    if not sys.stdin.isatty():
+        try:
+            _piped = sys.stdin.read().strip()
+        except Exception:
+            _piped = None
+
     if args and args[0] == "init":
         from franki.setup_wizard import run_wizard
         run_wizard()
@@ -944,6 +1041,11 @@ def main() -> None:
         _cmd_profile_cli(args[1:])
         return
 
+    if args and args[0] == "cmd":
+        from franki.oneshot import run_cmd
+        run_cmd(args[1:], piped_input=_piped)
+        return
+
     # First-run or legacy config migration → run setup wizard then start REPL
     if needs_setup():
         if CONFIG_FILE.exists():
@@ -961,7 +1063,12 @@ def main() -> None:
         return
 
     cfg = load_config()
-    _run_repl(cfg)
+    if _auto_yes:
+        cfg.auto_accept = True
+    if _piped:
+        _run_repl(cfg, piped_input=_piped)
+    else:
+        _run_repl(cfg)
 
 
 if __name__ == "__main__":
