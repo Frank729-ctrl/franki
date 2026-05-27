@@ -8,7 +8,7 @@ class TestAutoCompactConfig:
     def test_defaults(self):
         cfg = FrankiConfig()
         assert cfg.auto_compact is True
-        assert cfg.auto_compact_threshold == 0.85
+        assert cfg.auto_compact_threshold == 0.70
 
     def test_can_disable(self):
         cfg = FrankiConfig(auto_compact=False)

@@ -21,7 +21,7 @@ def _cfg(**kwargs):
         },
         "tavily_api_key": "tv-test",
         "auto_compact": True,
-        "auto_compact_threshold": 0.85,
+        "auto_compact_threshold": 0.70,
         "auto_compact_messages": 0,
     }
     base.update(kwargs)

@@ -140,6 +140,47 @@ class Session:
     def get_messages(self) -> list[dict]:
         return list(self._messages)
 
+    def get_messages_for_api(
+        self,
+        tool_result_max_chars: int = 2000,
+        max_history_turns: int = 0,
+    ) -> list[dict]:
+        """Return messages optimised for API calls.
+
+        Trims large tool results to *tool_result_max_chars* chars so that
+        file reads and command outputs don't accumulate and re-consume tokens
+        on every subsequent request.  The full content is preserved in
+        self._messages for /history and /diff display.
+
+        If *max_history_turns* > 0, only the most recent N user turns (and
+        everything after them) are included, keeping the system message.
+        """
+        msgs: list[dict] = list(self._messages)
+
+        # ── Trim large tool results ───────────────────────────────────────────
+        trimmed: list[dict] = []
+        for msg in msgs:
+            if msg.get("role") == "tool":
+                content = msg.get("content", "")
+                if isinstance(content, str) and len(content) > tool_result_max_chars:
+                    msg = dict(msg)
+                    excess = len(content) - tool_result_max_chars
+                    msg["content"] = (
+                        content[:tool_result_max_chars]
+                        + f"\n… [{excess} chars not re-sent to save tokens]"
+                    )
+            trimmed.append(msg)
+
+        # ── Sliding window: keep last N user turns ────────────────────────────
+        if max_history_turns > 0:
+            user_idxs = [i for i, m in enumerate(trimmed) if m["role"] == "user"]
+            if len(user_idxs) > max_history_turns:
+                cutoff = user_idxs[-max_history_turns]
+                system_msgs = [m for m in trimmed if m["role"] == "system"]
+                trimmed = system_msgs + trimmed[cutoff:]
+
+        return trimmed
+
     def clear(self) -> None:
         self._messages = []
         self._rebuild_system()

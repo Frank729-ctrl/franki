@@ -170,9 +170,15 @@ class FrankiConfig(BaseModel):
 
     # Auto-compact: summarise history when context window reaches threshold
     auto_compact: bool = True
-    auto_compact_threshold: float = 0.85      # fraction of context window
+    auto_compact_threshold: float = 0.70      # fraction of context window (was 0.85)
     auto_compact_messages: int = 0            # 0 = disabled; N = compact after N user messages
     auto_commit: bool = False
+
+    # Token budget: trim large tool results before sending to reduce rate-limit pressure.
+    # tool_result_max_chars: max chars kept per tool result in API calls (0 = unlimited).
+    # max_history_turns: sliding window — only last N user turns sent (0 = unlimited).
+    tool_result_max_chars: int = 2000
+    max_history_turns: int = 0
 
     # Routing
     local_first: bool = False                 # prefer local providers (Ollama, LM Studio)
