@@ -385,6 +385,25 @@ def execute_tool(name: str, args: dict[str, Any]) -> str:
 
 # ── Individual tool implementations ──────────────────────────────────────────
 
+_BLOCKED_PREFIXES = (
+    "/etc/", "/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/",
+    "/boot/", "/proc/", "/sys/", "/dev/",
+)
+
+
+def _safe_write_path(path: str) -> tuple[Path, str | None]:
+    """Resolve *path* and block writes to sensitive system locations.
+
+    Returns ``(resolved_path, None)`` on success or ``(_, error_msg)`` to block.
+    """
+    p = Path(path).resolve()
+    p_str = str(p)
+    for prefix in _BLOCKED_PREFIXES:
+        if p_str.startswith(prefix):
+            return p, f"blocked: writing to {prefix}* is not allowed"
+    return p, None
+
+
 def _read_file(path: str) -> str:
     p = Path(path)
     if not p.exists():
@@ -400,14 +419,18 @@ def _read_file(path: str) -> str:
 
 
 def _write_file(path: str, content: str) -> str:
-    p = Path(path)
+    p, err = _safe_write_path(path)
+    if err:
+        return err
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     return f"wrote {content.count(chr(10)) + 1} lines → {path}"
 
 
 def _edit_file(path: str, old_str: str, new_str: str) -> str:
-    p = Path(path)
+    p, err = _safe_write_path(path)
+    if err:
+        return err
     if not p.exists():
         return f"file not found: {path}"
     current = p.read_text(encoding="utf-8")

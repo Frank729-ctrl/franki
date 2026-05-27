@@ -17,7 +17,14 @@ RATE_LIMIT_SIGNALS = [
 
 
 class ProviderRateLimitError(Exception):
-    pass
+    """Raised on HTTP 429 / rate-limit responses.
+
+    ``retry_after`` carries the server-suggested wait in seconds when the
+    response includes a ``Retry-After`` header; otherwise it is ``None``.
+    """
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class ProviderError(Exception):
@@ -92,7 +99,14 @@ async def stream_chat(
                     if resp.status_code == 429 or any(
                         s in text.lower() for s in RATE_LIMIT_SIGNALS
                     ):
-                        raise ProviderRateLimitError(friendly)
+                        ra_raw = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset-after")
+                        retry_after: float | None = None
+                        if ra_raw:
+                            try:
+                                retry_after = float(ra_raw)
+                            except ValueError:
+                                pass
+                        raise ProviderRateLimitError(friendly, retry_after=retry_after)
                     raise ProviderError(friendly)
 
                 finish_reason: str | None = None
@@ -163,7 +177,14 @@ async def chat_with_tools(
                 if resp.status_code == 429 or any(
                     s in resp.text.lower() for s in RATE_LIMIT_SIGNALS
                 ):
-                    raise ProviderRateLimitError(friendly)
+                    ra_raw = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset-after")
+                    retry_after: float | None = None
+                    if ra_raw:
+                        try:
+                            retry_after = float(ra_raw)
+                        except ValueError:
+                            pass
+                    raise ProviderRateLimitError(friendly, retry_after=retry_after)
                 raise ProviderError(friendly)
             data = resp.json()
             return data["choices"][0]["message"]
@@ -224,7 +245,14 @@ async def stream_chat_with_tools(
                     if resp.status_code == 429 or any(
                         s in text.lower() for s in RATE_LIMIT_SIGNALS
                     ):
-                        raise ProviderRateLimitError(friendly)
+                        ra_raw = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset-after")
+                        retry_after: float | None = None
+                        if ra_raw:
+                            try:
+                                retry_after = float(ra_raw)
+                            except ValueError:
+                                pass
+                        raise ProviderRateLimitError(friendly, retry_after=retry_after)
                     raise ProviderError(friendly)
 
                 finish_reason: str | None = None

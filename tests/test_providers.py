@@ -83,11 +83,12 @@ async def _collect_stream(gen):
 class _MockStreamResp:
     """Simulates httpx streaming response as an async context manager."""
 
-    def __init__(self, status_code=200, body=b"", lines=None):
+    def __init__(self, status_code=200, body=b"", lines=None, headers=None):
         self.status_code = status_code
         self._body = body
         self._lines = lines or []
         self.text = body.decode() if body else ""
+        self.headers = headers or {}
 
     async def aread(self):
         return self._body

@@ -111,7 +111,19 @@ def _print_fallback_notice(from_model: str, to_model: str, reason: str = "") -> 
 # ── Streaming ─────────────────────────────────────────────────────────────────
 
 def _count_tokens_approx(text: str) -> int:
-    return max(1, len(text) // 4)
+    """Estimate token count without a tokenizer library.
+
+    Uses per-character weights:
+      - CJK / full-width characters:  ~1 token each (high info density)
+      - ASCII code/symbol characters:  ~1 token per 3 chars (dense syntax)
+      - Other Unicode (accented, etc.): ~1 token per 2.5 chars
+      - Plain ASCII prose/space:        ~1 token per 4 chars (GPT-style rule)
+    """
+    cjk = sum(1 for c in text if "一" <= c <= "鿿" or "぀" <= c <= "ヿ" or "가" <= c <= "힯")
+    code_ascii = sum(1 for c in text if c in "{}[]()<>|&;:=+*/\\%#@!~^`\"'")
+    other_unicode = sum(1 for c in text if ord(c) > 127 and not ("一" <= c <= "鿿" or "぀" <= c <= "ヿ" or "가" <= c <= "힯"))
+    plain = len(text) - cjk - code_ascii - other_unicode
+    return max(1, int(cjk + code_ascii / 3 + other_unicode / 2.5 + plain / 4))
 
 
 async def _stream_response(
