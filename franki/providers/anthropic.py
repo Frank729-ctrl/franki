@@ -125,11 +125,12 @@ def _build_headers(api_key: str) -> dict:
     return {
         "x-api-key":         api_key,
         "anthropic-version": _API_VERSION,
+        "anthropic-beta":    "prompt-caching-2024-07-31",
         "content-type":      "application/json",
     }
 
 
-def _raise_for_status(status: int, body: str, provider: str, model: str) -> None:
+def _raise_for_status(status: int, body: str, provider: str, model: str, retry_after: float | None = None) -> None:
     b = body.lower()
     if status == 401:
         raise ProviderError(f"{provider}: invalid API key — update with /config")
@@ -138,11 +139,11 @@ def _raise_for_status(status: int, body: str, provider: str, model: str) -> None
     if status == 404:
         raise ProviderError(f"{provider}: model '{model}' not found")
     if status == 429 or any(s in b for s in RATE_LIMIT_SIGNALS):
-        raise ProviderRateLimitError(f"{provider}: rate limit hit")
+        raise ProviderRateLimitError(f"{provider}: rate limit hit", retry_after=retry_after)
     if status == 500:
         raise ProviderError(f"{provider}: server error — try again")
     if status == 529 or status == 503:
-        raise ProviderRateLimitError(f"{provider}: overloaded — try again shortly")
+        raise ProviderRateLimitError(f"{provider}: overloaded — try again shortly", retry_after=retry_after)
     try:
         data = json.loads(body)
         msg = (data.get("error") or {}).get("message", "")
@@ -175,7 +176,13 @@ async def stream_chat(
         "temperature": temperature,
     }
     if system_prompt:
-        payload["system"] = system_prompt
+        payload["system"] = [
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     finish_reason: str | None = None
 
@@ -186,7 +193,14 @@ async def stream_chat(
             ) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
-                    _raise_for_status(resp.status_code, body.decode(), provider_name, model)
+                    ra_raw = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset-after")
+                    ra: float | None = None
+                    if ra_raw:
+                        try:
+                            ra = float(ra_raw)
+                        except ValueError:
+                            pass
+                    _raise_for_status(resp.status_code, body.decode(), provider_name, model, retry_after=ra)
 
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
@@ -247,7 +261,13 @@ async def stream_chat_with_tools(
         "temperature": temperature,
     }
     if system_prompt:
-        payload["system"] = system_prompt
+        payload["system"] = [
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
     if ant_tools:
         payload["tools"] = ant_tools
 
@@ -262,7 +282,14 @@ async def stream_chat_with_tools(
             ) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
-                    _raise_for_status(resp.status_code, body.decode(), provider_name, model)
+                    ra_raw = resp.headers.get("retry-after") or resp.headers.get("x-ratelimit-reset-after")
+                    ra: float | None = None
+                    if ra_raw:
+                        try:
+                            ra = float(ra_raw)
+                        except ValueError:
+                            pass
+                    _raise_for_status(resp.status_code, body.decode(), provider_name, model, retry_after=ra)
 
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):

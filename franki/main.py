@@ -518,7 +518,7 @@ _SLASH_COMMANDS = [
     "/cd", "/skill", "/model", "/scope", "/mitre", "/payload", "/tools",
     "/explain", "/remember", "/memories", "/forget", "/cost", "/routing",
     "/providers", "/ollama", "/mcp", "/test", "/sessions", "/undo", "/diff", "/profile",
-    "/auto", "/autocommit", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
+    "/auto", "/autocommit", "/toolperms", "/sandbox", "/branch", "/audit", "/init", "/config", "/help",
     "/feedback", "/exit", "/quit",
 ]
 

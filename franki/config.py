@@ -179,6 +179,8 @@ class FrankiConfig(BaseModel):
     # max_history_turns: sliding window — only last N user turns sent (0 = unlimited).
     tool_result_max_chars: int = 2000
     max_history_turns: int = 0
+    # per-tool overrides: tool_name → "always" | "ask" | "never"
+    tool_permissions: dict[str, str] = {}
 
     # Routing
     local_first: bool = False                 # prefer local providers (Ollama, LM Studio)
