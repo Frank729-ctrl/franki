@@ -241,11 +241,13 @@ async def stream_chat_with_tools(
     tools: list[dict],
     provider_name: str = "anthropic",
     temperature: float = 0.7,
+    thinking_budget: int = 0,
 ):
     """
     Streaming tool-capable chat via Anthropic Messages API.
     Yields ("text", chunk) and ("done", json_str) — same interface as generic.py.
     Tool calls are returned in OpenAI format so the agent loop needs no changes.
+    When thinking_budget > 0 extended thinking is enabled (budget_tokens = thinking_budget).
     """
     system_prompt, ant_messages = _convert_messages(messages)
     ant_tools = _convert_tools(tools)
@@ -254,12 +256,17 @@ async def stream_chat_with_tools(
     url = f"{base}/v1/messages"
 
     payload: dict = {
-        "model":       model,
-        "max_tokens":  _DEFAULT_MAX_TOK,
-        "messages":    ant_messages,
-        "stream":      True,
-        "temperature": temperature,
+        "model":      model,
+        "max_tokens": _DEFAULT_MAX_TOK,
+        "messages":   ant_messages,
+        "stream":     True,
     }
+    if thinking_budget > 0:
+        # Extended thinking requires budget >= 1024 and temperature must be 1
+        payload["thinking"] = {"type": "enabled", "budget_tokens": max(thinking_budget, 1024)}
+        payload["temperature"] = 1
+    else:
+        payload["temperature"] = temperature
     if system_prompt:
         payload["system"] = [
             {
