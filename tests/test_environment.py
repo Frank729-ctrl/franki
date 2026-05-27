@@ -44,14 +44,9 @@ class TestBuildEnvironmentBlock:
     def test_marks_active_provider(self):
         from franki.environment import build_environment_block
         block = build_environment_block(_cfg())
-        assert "active" in block
-
-    def test_includes_builtin_tools(self):
-        from franki.environment import build_environment_block
-        block = build_environment_block(_cfg())
-        assert "read_file" in block
-        assert "write_file" in block
-        assert "run_command" in block
+        # Active provider and model appear in the compact model: field
+        assert "groq" in block
+        assert "llama-3.3-70b-versatile" in block
 
     def test_includes_web_search(self):
         from franki.environment import build_environment_block
@@ -65,11 +60,13 @@ class TestBuildEnvironmentBlock:
         assert "pentest" in block
         assert "soc" in block
 
-    def test_includes_settings(self):
+    def test_includes_auto_accept_when_on(self):
         from franki.environment import build_environment_block
-        block = build_environment_block(_cfg())
-        assert "auto_accept" in block
-        assert "auto_copy" in block
+        block = build_environment_block(_cfg(auto_accept=True))
+        assert "auto-accept" in block
+        # Not shown when off (saves tokens)
+        block_off = build_environment_block(_cfg(auto_accept=False))
+        assert "auto-accept" not in block_off
 
     def test_includes_mcp_tools_when_registered(self):
         from franki.environment import build_environment_block
@@ -107,10 +104,12 @@ class TestBuildEnvironmentBlock:
         block = build_environment_block(_cfg())
         assert "### MCP servers" not in block
 
-    def test_includes_self_knowledge_instruction(self):
+    def test_compact_format_low_token_count(self):
         from franki.environment import build_environment_block
+        from franki.main import _count_tokens_approx
         block = build_environment_block(_cfg())
-        assert "knowledge" in block.lower() or "capabilities" in block.lower()
+        # Lean format should stay well under 100 tokens
+        assert _count_tokens_approx(block) < 100
 
 
 class TestSessionEnvContext:
